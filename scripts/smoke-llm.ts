@@ -45,7 +45,7 @@ async function runSmokeLlm() {
       console.log('\n[Guardrail Rejected Numbers]: (none rejected)');
     }
 
-    console.log('\n[Final Advice Headline]:', result.advice.headline);
+    console.log('\n[Final Advice Verdict]:', result.advice.verdict || result.advice.headline);
   } catch (err) {
     console.error('Smoke test execution encountered error:', err);
   } finally {

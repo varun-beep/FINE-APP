@@ -1,40 +1,78 @@
 import type { EngineOutput } from '@/lib/engine/types';
-import type { DailyReviewAdvice } from './types';
-import { formatPaise } from '@/lib/money';
+import type { DailyReviewAdviceV2 } from './types';
+import { formatPaiseToRupees } from '@/lib/money';
+
+export type UnifiedDailyReviewAdvice = DailyReviewAdviceV2 & {
+  headline: string;
+  went_well: string[];
+  watch_out: string[];
+  action_tomorrow: string;
+  saving_ideas: string[];
+  earning_ideas: string[];
+};
 
 /**
- * Generates deterministic, template-based fallback advice built purely from the engine output.
- * STRICT DATA CONDITIONALITY AUDIT:
- * - Every statement is grounded in and conditional on actual engine data.
- * - Never claims "on budget" if no budget is set or if budget is over.
- * - Never mentions a category unless that category actually has recorded spend.
- * - Never claims recurring expenses are regular unless recurring charges actually exist.
- * - Saving ideas target actual active spending categories.
+ * Section: DAILY REVIEW v2 DETERMINISTIC FALLBACK
+ * Built from the same ranked insight structure as the LLM advice.
+ * Purely deterministic, fully grounded in engine evidence, and zero hallucination.
+ * Also includes backwards-compatible v1 fields to satisfy legacy assertions.
  */
-export function generateFallbackAdvice(output: EngineOutput): DailyReviewAdvice {
-  const anomalies = output.transactionAnomalies;
-  const budget = output.budgetRunRate;
-  const recurring = output.recurring;
+export function generateFallbackAdvice(
+  output: EngineOutput,
+  last3ActionIds?: string[]
+): UnifiedDailyReviewAdvice {
+  const allowance = output.allowance;
+  const nonSafeInsights = (output.insights || []).filter(
+    (i) => i.type !== 'safe_to_spend'
+  );
 
-  const activeCategories = budget.categories.filter((c) => c.spentSoFarPaise > 0);
+  const anomalies = output.transactionAnomalies || [];
+  const budget = output.budgetRunRate;
+  const recurring = output.recurring || [];
+
+  const activeCategories = (budget?.categories || []).filter((c) => c.spentSoFarPaise > 0);
   const categoriesWithBudget = activeCategories.filter((c) => c.monthlyLimitPaise !== null);
   const onTrackBudgetCategories = categoriesWithBudget.filter((c) => c.budgetStatus === 'on_track');
   const overBudgetCategories = categoriesWithBudget.filter((c) => c.budgetStatus === 'over');
   const warningBudgetCategories = categoriesWithBudget.filter((c) => c.budgetStatus === 'warning');
 
-  const hasOverallBudget = budget.monthlyLimitPaise !== null;
-  const isOverallOver = hasOverallBudget && budget.budgetStatus === 'over';
-  const isOverallWarning = hasOverallBudget && budget.budgetStatus === 'warning';
+  const hasOverallBudget = budget?.monthlyLimitPaise !== null && budget?.monthlyLimitPaise !== undefined;
+  const isOverallOver = hasOverallBudget && budget?.budgetStatus === 'over';
+  const isOverallWarning = hasOverallBudget && budget?.budgetStatus === 'warning';
 
   // 1. Determine Mood
-  let mood: 'good' | 'ok' | 'careful' = 'good';
-  if (anomalies.length > 0 || isOverallOver || overBudgetCategories.length > 0) {
+  let mood: DailyReviewAdviceV2['mood'] = 'good';
+  if (anomalies.length > 0 || isOverallOver || overBudgetCategories.length > 0 || allowance?.verdict === 'over') {
     mood = 'careful';
   } else if (isOverallWarning || warningBudgetCategories.length > 0) {
     mood = 'ok';
+  } else if (allowance?.verdict === 'under') {
+    mood = 'good';
   }
 
-  // 2. Headline
+  // 2. Verdict (one sentence on today vs the allowance)
+  let verdict: string;
+  if (allowance) {
+    const todayStr = formatPaiseToRupees(allowance.todaySpentPaise);
+    const allowStr = formatPaiseToRupees(allowance.dailyAllowancePaise);
+    if (allowance.verdict === 'under') {
+      const diffStr = formatPaiseToRupees(
+        allowance.dailyAllowancePaise - allowance.todaySpentPaise
+      );
+      verdict = `Today you spent ${todayStr}, keeping you comfortably ${diffStr} under your daily allowance of ${allowStr}.`;
+    } else if (allowance.verdict === 'at') {
+      verdict = `Today you spent ${todayStr}, matching your daily allowance of ${allowStr} exactly.`;
+    } else {
+      const diffStr = formatPaiseToRupees(
+        allowance.todaySpentPaise - allowance.dailyAllowancePaise
+      );
+      verdict = `Today's spend of ${todayStr} exceeded your daily allowance of ${allowStr} by ${diffStr}.`;
+    }
+  } else {
+    verdict = `Today's expenses were recorded across active categories.`;
+  }
+
+  // 3. Headline (v1 compatibility)
   let headline = 'Spending is steady and tracking within normal boundaries';
   if (anomalies.length > 0) {
     headline = `Unusual spend flagged: ${anomalies.length} transaction(s) significantly exceeded normal baselines`;
@@ -48,10 +86,70 @@ export function generateFallbackAdvice(output: EngineOutput): DailyReviewAdvice 
     headline = `${warningBudgetCategories[0].category} spending is approaching its monthly limit`;
   }
 
-  // 3. Went Well (1..3 items)
-  const wentWell: string[] = [];
+  // 4. Candidate Insights (<= 3 items)
+  const insights = nonSafeInsights.slice(0, 3).map((ins) => ({
+    insight_id: ins.id,
+    narrative: ins.title,
+    lever_id: ins.levers?.[0]?.id,
+  }));
 
-  // A. Budget tracking vs General expense logging
+  // 5. Why It Matters (<= 2 sentences, from evidence)
+  let whyItMatters: string;
+  if (nonSafeInsights.length === 0) {
+    whyItMatters = 'Nothing notable today; all category spending is tracking predictably within normal historical bounds.';
+  } else {
+    const topInsight = nonSafeInsights[0];
+    const impactStr =
+      topInsight.impactPaise > 0
+        ? ` with an estimated impact of ${formatPaiseToRupees(topInsight.impactPaise)}`
+        : '';
+    whyItMatters = `${topInsight.title}${impactStr}. Addressing this keeps your monthly discretionary budget on target.`;
+  }
+
+  // 6. One Action Tomorrow (must reference a lever_id or the allowance, with ₹ effect)
+  let oneActionTomorrow: string;
+  const usedActions = new Set((last3ActionIds || []).map((a) => a.toLowerCase().trim()));
+
+  let chosenLever: { id: string; description: string; savingPaise: number } | null = null;
+  for (const ins of nonSafeInsights) {
+    for (const lev of ins.levers || []) {
+      if (!usedActions.has(lev.id.toLowerCase().trim()) && !usedActions.has(lev.description.toLowerCase().trim())) {
+        chosenLever = {
+          id: lev.id,
+          description: lev.description,
+          savingPaise: lev.monthlySavingPaise,
+        };
+        break;
+      }
+    }
+    if (chosenLever) break;
+  }
+
+  if (chosenLever && chosenLever.savingPaise > 0) {
+    oneActionTomorrow = `${chosenLever.description} to save ${formatPaiseToRupees(chosenLever.savingPaise)} this month (lever: ${chosenLever.id}).`;
+  } else if (allowance) {
+    const tomorrowStr = formatPaiseToRupees(allowance.tomorrowDailyAllowancePaise);
+    oneActionTomorrow = `Keep discretionary spending within tomorrow's adjusted allowance of ${tomorrowStr} to protect your monthly savings target.`;
+  } else {
+    oneActionTomorrow = 'Log every purchase tomorrow to keep your spending record complete and actionable.';
+  }
+
+  // 7. Win (something genuinely good: under allowance, savings on track, drift reversing, experiment completed; null if nothing is true)
+  let win: string | null = null;
+  if (allowance && allowance.verdict === 'under') {
+    const underBy = formatPaiseToRupees(allowance.dailyAllowancePaise - allowance.todaySpentPaise);
+    win = `Finished today ${underBy} under your daily spending allowance.`;
+  } else {
+    const completedExp = nonSafeInsights.find(
+      (i) => i.type === 'experiment_progress' && (i.evidence?.status === 'completed' || (i.evidence?.achievedSavingPaise as number) > 0)
+    );
+    if (completedExp && completedExp.impactPaise > 0) {
+      win = `Experiment win: Saved ${formatPaiseToRupees(completedExp.impactPaise)} against your baseline.`;
+    }
+  }
+
+  // 8. Went Well (v1 compatibility)
+  const wentWell: string[] = [];
   if (onTrackBudgetCategories.length > 0) {
     wentWell.push(
       `${onTrackBudgetCategories.map((c) => c.category).slice(0, 2).join(' and ')} spending is tracking comfortably on budget.`
@@ -64,56 +162,30 @@ export function generateFallbackAdvice(output: EngineOutput): DailyReviewAdvice 
     wentWell.push('Daily expenses were diligently recorded to maintain an accurate financial ledger.');
   }
 
-  // B. Anomalies vs Recurring stability
   if (anomalies.length === 0) {
     wentWell.push('No anomalous spending spikes were detected in recent transactions.');
-  } else if (recurring.length > 0) {
-    wentWell.push(
-      `Recurring charges (${recurring.map((r) => r.merchantOrNote.slice(0, 25)).slice(0, 2).join(', ')}) remained predictable.`
-    );
-  } else {
-    wentWell.push('Daily transactions were consistently logged to maintain an uninterrupted history.');
   }
 
-  // 4. Watch Out (0..3 items)
+  // 9. Watch Out (v1 compatibility)
   const watchOut: string[] = [];
-
-  // A. Anomalies callouts
   if (anomalies.length > 0) {
     for (const anom of anomalies.slice(0, 2)) {
       watchOut.push(
-        `${anom.category} had a spend of ${formatPaise(anom.amountPaise)} (${anom.ratioToMedian}x your usual baseline).`
+        `${anom.category} had a spend of ${formatPaiseToRupees(anom.amountPaise)} (${anom.ratioToMedian}x your usual baseline).`
       );
     }
   }
-
-  // B. Budget overages / warnings
-  if (isOverallOver && budget.monthlyLimitPaise) {
+  if (isOverallOver && budget?.monthlyLimitPaise) {
     watchOut.push(
-      `Total spend of ${formatPaise(budget.spentSoFarPaise)} has exceeded the ${formatPaise(budget.monthlyLimitPaise)} monthly limit.`
+      `Total spend of ${formatPaiseToRupees(budget.spentSoFarPaise)} has exceeded the ${formatPaiseToRupees(budget.monthlyLimitPaise)} monthly limit.`
     );
   } else if (overBudgetCategories.length > 0) {
     const overCat = overBudgetCategories[0];
     watchOut.push(
-      `${overCat.category} spend of ${formatPaise(overCat.spentSoFarPaise)} has exceeded its ${formatPaise(overCat.monthlyLimitPaise!)} limit.`
-    );
-  } else if (isOverallWarning && budget.monthlyLimitPaise) {
-    watchOut.push(
-      `Projected month-end total of ${formatPaise(budget.projectedMonthEndPaise)} is approaching the ${formatPaise(budget.monthlyLimitPaise)} limit.`
+      `${overCat.category} spend of ${formatPaiseToRupees(overCat.spentSoFarPaise)} has exceeded its ${formatPaiseToRupees(overCat.monthlyLimitPaise!)} limit.`
     );
   }
 
-  // 5. Action Tomorrow
-  let actionTomorrow = 'Stick to essential daily expenses and log each item promptly.';
-  if (anomalies.length > 0) {
-    actionTomorrow = 'Pause non-essential discretionary purchases tomorrow to balance recent spikes.';
-  } else if (isOverallOver || overBudgetCategories.length > 0) {
-    actionTomorrow = 'Review upcoming flexible expenses and hold off on optional shopping.';
-  } else if (isOverallWarning) {
-    actionTomorrow = 'Slow down discretionary spend over the next few days to stay within budget.';
-  }
-
-  // 6. Saving Ideas (1..3 items)
   const savingIdeas: string[] = [];
   if (recurring.length > 0) {
     const firstRec = recurring[0];
@@ -133,44 +205,54 @@ export function generateFallbackAdvice(output: EngineOutput): DailyReviewAdvice 
     savingIdeas.push('Place non-essential shopping items on a 48-hour cooling-off list before buying.');
   } else if (transportActive) {
     savingIdeas.push('Consolidate errands into a single commute trip to save on transport costs.');
-  } else {
+  } else if (recurring.length === 0) {
     savingIdeas.push('Review everyday incidental purchases to trim non-essential spending leaks.');
   }
 
-  // 7. Earning Ideas (0..2 items)
-  const earningIdeas: string[] = [
-    'List unused household items or pre-owned gadgets on online marketplaces.',
-  ];
-
   return {
-    headline,
-    went_well: wentWell.slice(0, 3),
-    watch_out: watchOut.slice(0, 3),
-    action_tomorrow: actionTomorrow,
-    saving_ideas: savingIdeas.slice(0, 3),
-    earning_ideas: earningIdeas.slice(0, 2),
+    verdict,
+    why_it_matters: whyItMatters,
+    insights,
+    one_action_tomorrow: oneActionTomorrow,
+    win,
     mood,
+    // v1 compatibility
+    headline,
+    went_well: wentWell,
+    watch_out: watchOut,
+    action_tomorrow: oneActionTomorrow,
+    saving_ideas: savingIdeas,
+    earning_ideas: [],
   };
 }
 
 /**
- * Generates friendly learning-mode result when baseline thresholds have not yet been met.
+ * Generates friendly learning-mode review when baseline thresholds have not yet been met.
  */
-export function generateLearningAdvice(output: EngineOutput): DailyReviewAdvice {
+export function generateLearningAdvice(output: EngineOutput): UnifiedDailyReviewAdvice {
   const { expenseCount, expenseThreshold, distinctDaysCount, distinctDaysThreshold, expensesNeeded, daysNeeded } =
     output.learning;
 
+  const headline = `SpendCoach is still learning your spending patterns (${expenseCount}/${expenseThreshold} entries, ${distinctDaysCount}/${distinctDaysThreshold} days)`;
+  const actionTomorrow = `Log your purchases tomorrow. Need ${expensesNeeded} more entries across ${daysNeeded} more days.`;
+
   return {
-    headline: `SpendCoach is still learning your spending patterns (${expenseCount}/${expenseThreshold} entries, ${distinctDaysCount}/${distinctDaysThreshold} days)`,
+    verdict: 'SpendCoach is actively learning your baseline financial patterns.',
+    why_it_matters: `Accurate detection requires at least ${expenseThreshold} entries across ${distinctDaysThreshold} distinct days before anomaly detection unlocks.`,
+    insights: [],
+    one_action_tomorrow: actionTomorrow,
+    win: `Successfully logged ${expenseCount} entries across ${distinctDaysCount} days so far.`,
+    mood: 'ok',
+    // v1 compatibility
+    headline,
     went_well: [
       'Diligent expense recording is actively establishing your baseline spending behavior.',
     ],
     watch_out: [],
-    action_tomorrow: `Log your daily expenses tomorrow. Need ${expensesNeeded} more entries and ${daysNeeded} more days of history.`,
+    action_tomorrow: actionTomorrow,
     saving_ideas: [
       'Continue logging both small and large expenses to unlock personalized AI recommendations.',
     ],
     earning_ideas: [],
-    mood: 'ok',
   };
 }

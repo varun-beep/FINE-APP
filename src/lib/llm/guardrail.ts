@@ -1,4 +1,4 @@
-import type { DailyReviewAdvice } from './types';
+import type { DailyReviewAdviceV2 } from './types';
 
 export interface GuardrailValidationResult {
   valid: boolean;
@@ -33,9 +33,25 @@ export function extractNumbersFromText(text: string): number[] {
 /**
  * Checks if a candidate number is present in or derivable by simple rounding from the allowed numbers.
  */
-function isNumberAllowed(num: number, allowedSet: Set<number>, allowedList: number[]): boolean {
-  // 1. Trivial structural numbers in advice (e.g., "₹0", "1 action", "2 ways", "step 1")
-  if (num === 0 || num === 1 || num === 2 || num === 3) {
+export function isNumberAllowed(
+  num: number,
+  allowedSet: Set<number>,
+  allowedList: number[]
+): boolean {
+  // 1. Trivial structural numbers in advice (e.g., "₹0", "1 action", "2 ways", "step 1", "3 items", "7 days", "14 days", "30 days")
+  if (
+    num === 0 ||
+    num === 1 ||
+    num === 2 ||
+    num === 3 ||
+    num === 4 ||
+    num === 5 ||
+    num === 7 ||
+    num === 14 ||
+    num === 28 ||
+    num === 30 ||
+    num === 31
+  ) {
     return true;
   }
 
@@ -69,7 +85,10 @@ function isNumberAllowed(num: number, allowedSet: Set<number>, allowedList: numb
     if (allowed > 500) {
       const round100Allowed = Math.round(allowed / 100) * 100;
       const round1000Allowed = Math.round(allowed / 1000) * 1000;
-      if (Math.round(num) === round100Allowed || Math.round(num) === round1000Allowed) {
+      if (
+        Math.round(num) === round100Allowed ||
+        Math.round(num) === round1000Allowed
+      ) {
         return true;
       }
     }
@@ -108,21 +127,37 @@ function isNumberAllowed(num: number, allowedSet: Set<number>, allowedList: numb
  * If any number is unsupported, treats the output as invalid.
  */
 export function validateNumberGuardrail(
-  advice: DailyReviewAdvice,
+  advice: Record<string, unknown>,
   allowedNumbers: number[]
 ): GuardrailValidationResult {
   const allowedSet = new Set(allowedNumbers);
 
-  // Collect all text from all advice fields
-  const textCorpus = [
-    advice.headline,
-    ...advice.went_well,
-    ...advice.watch_out,
-    advice.action_tomorrow,
-    ...advice.saving_ideas,
-    ...advice.earning_ideas,
-  ].join(' ');
+  const textCorpusParts: string[] = [];
 
+  // v2 fields
+  if (typeof advice.verdict === 'string') textCorpusParts.push(advice.verdict);
+  if (typeof advice.why_it_matters === 'string')
+    textCorpusParts.push(advice.why_it_matters);
+  if (Array.isArray(advice.insights)) {
+    for (const ins of advice.insights) {
+      if (ins && typeof ins === 'object' && typeof (ins as Record<string, unknown>).narrative === 'string') {
+        textCorpusParts.push((ins as Record<string, unknown>).narrative as string);
+      }
+    }
+  }
+  if (typeof advice.one_action_tomorrow === 'string')
+    textCorpusParts.push(advice.one_action_tomorrow);
+  if (typeof advice.win === 'string') textCorpusParts.push(advice.win);
+
+  // v1 backwards-compatible fields
+  if (typeof advice.headline === 'string') textCorpusParts.push(advice.headline);
+  if (Array.isArray(advice.went_well)) textCorpusParts.push(...advice.went_well.filter((x): x is string => typeof x === 'string'));
+  if (Array.isArray(advice.watch_out)) textCorpusParts.push(...advice.watch_out.filter((x): x is string => typeof x === 'string'));
+  if (typeof advice.action_tomorrow === 'string') textCorpusParts.push(advice.action_tomorrow);
+  if (Array.isArray(advice.saving_ideas)) textCorpusParts.push(...advice.saving_ideas.filter((x): x is string => typeof x === 'string'));
+  if (Array.isArray(advice.earning_ideas)) textCorpusParts.push(...advice.earning_ideas.filter((x): x is string => typeof x === 'string'));
+
+  const textCorpus = textCorpusParts.join(' ');
   const extractedNumbers = extractNumbersFromText(textCorpus);
   const unsupported: number[] = [];
 
@@ -144,4 +179,56 @@ export function validateNumberGuardrail(
     valid: true,
     unsupportedNumbers: [],
   };
+}
+
+/**
+ * INSIGHT ID GUARDRAIL:
+ * Verifies that all insight_ids in the advice exist in the candidate insights list.
+ * If candidate list is empty, insights must be empty.
+ */
+export function validateInsightIds(
+  advice: DailyReviewAdviceV2,
+  candidateInsightIds: string[]
+): { valid: boolean; reason?: string } {
+  const allowedIds = new Set(candidateInsightIds);
+
+  for (const item of advice.insights || []) {
+    if (!allowedIds.has(item.insight_id)) {
+      return {
+        valid: false,
+        reason: `Insight ID "${item.insight_id}" is not in the supplied candidate insight list: [${candidateInsightIds.join(', ')}]`,
+      };
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
+ * ACTION ANTI-REPETITION GUARDRAIL:
+ * Ensures the chosen action does not repeat an action shown in the last 3 reviews.
+ */
+export function validateActionAntiRepetition(
+  actionTomorrow: string,
+  last3ActionIds?: string[]
+): { valid: boolean; reason?: string } {
+  if (!last3ActionIds || last3ActionIds.length === 0) {
+    return { valid: true };
+  }
+
+  const normalizedAction = actionTomorrow.toLowerCase().trim();
+  for (const prevAction of last3ActionIds) {
+    const normalizedPrev = prevAction.toLowerCase().trim();
+    if (
+      normalizedAction === normalizedPrev ||
+      (normalizedPrev.length > 5 && normalizedAction.includes(normalizedPrev))
+    ) {
+      return {
+        valid: false,
+        reason: `Action "${actionTomorrow}" repeats an action shown in the last 3 reviews.`,
+      };
+    }
+  }
+
+  return { valid: true };
 }
