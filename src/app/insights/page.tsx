@@ -3,56 +3,92 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Navbar } from '@/components/Navbar';
 import { formatPaise, parseRupeesToPaise, paiseToDecimalString } from '@/lib/money';
-import { formatDisplayDate } from '@/lib/date';
-import { CategoryBadge } from '@/components/CategoryBadge';
-import { EXPENSE_CATEGORIES } from '@/lib/validations';
 import type { EngineOutput } from '@/lib/engine/types';
 import {
   Sparkles,
-  AlertTriangle,
   RefreshCw,
-  TrendingUp,
-  TrendingDown,
-  Calendar,
   CheckCircle2,
-  PieChart,
-  Save,
   Clock,
+  EyeOff,
+  Sliders,
+  DollarSign,
+  X,
+  BookmarkCheck,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
+
 
 export default function InsightsPage() {
   const [data, setData] = useState<EngineOutput | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [feedbackPending, setFeedbackPending] = useState<string | null>(null);
+  const [showNoise, setShowNoise] = useState(false);
+  const [showCoverageReasons, setShowCoverageReasons] = useState(false);
+  const [showBudgets, setShowBudgets] = useState(false);
   const [budgetInputs, setBudgetInputs] = useState<Record<string, string>>({});
   const [savingCategory, setSavingCategory] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
 
-  const fetchInsights = useCallback(async () => {
+  const fetchInsights = useCallback(async (fresh = false) => {
     try {
-      const res = await fetch('/api/insights');
+      const url = fresh ? '/api/insights?fresh=true' : '/api/insights';
+      const res = await fetch(url);
       if (res.ok) {
         const json: EngineOutput = await res.json();
         setData(json);
 
         // Populate budget input values
-        const inputs: Record<string, string> = {};
-        for (const cat of json.budgetRunRate.categories) {
-          inputs[cat.category] = cat.monthlyLimitPaise
-            ? paiseToDecimalString(cat.monthlyLimitPaise)
-            : '';
+        if (json.budgetRunRate?.categories) {
+          const inputs: Record<string, string> = {};
+          for (const cat of json.budgetRunRate.categories) {
+            inputs[cat.category] = cat.monthlyLimitPaise
+              ? paiseToDecimalString(cat.monthlyLimitPaise)
+              : '';
+          }
+          setBudgetInputs(inputs);
         }
-        setBudgetInputs(inputs);
       }
     } catch (err) {
       console.error('Failed to load insights:', err);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
     fetchInsights();
   }, [fetchInsights]);
+
+  const handleFeedback = async (
+    insightId: string,
+    feedback: 'not_now' | 'not_useful' | 'planned',
+    expenseId?: string
+  ) => {
+    setFeedbackPending(insightId);
+    try {
+      const res = await fetch('/api/insights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          insightId,
+          feedback,
+          expenseId,
+        }),
+      });
+
+      if (res.ok) {
+        // Refresh insights immediately
+        await fetchInsights(true);
+      }
+    } catch (err) {
+      console.error('Failed to submit insight feedback:', err);
+    } finally {
+      setFeedbackPending(null);
+    }
+  };
 
   const handleSaveBudget = async (category: string) => {
     const rawVal = budgetInputs[category]?.trim();
@@ -93,385 +129,404 @@ export default function InsightsPage() {
     return (
       <div className="flex min-h-screen flex-col pb-16">
         <Navbar />
-        <main className="flex-1 px-4 py-6 space-y-4">
-          <div className="glass-card h-28 animate-pulse rounded-3xl" />
-          <div className="glass-card h-40 animate-pulse rounded-3xl" />
-          <div className="glass-card h-52 animate-pulse rounded-3xl" />
+        <main className="flex-1 px-4 py-6 space-y-4 max-w-2xl mx-auto w-full">
+          <div className="glass-card h-32 animate-pulse rounded-3xl" />
+          <div className="glass-card h-44 animate-pulse rounded-3xl" />
+          <div className="glass-card h-48 animate-pulse rounded-3xl" />
         </main>
       </div>
     );
   }
 
-  if (!data) {
-    return (
-      <div className="flex min-h-screen flex-col pb-16">
-        <Navbar />
-        <main className="flex-1 px-4 py-12 text-center text-slate-400">
-          <p>No insights available yet. Log expenses to train SpendCoach.</p>
-        </main>
-      </div>
-    );
-  }
-
-  const { learning, transactionAnomalies, dailyAnomalies, recurring, budgetRunRate, trends } = data;
-
-  // Learning progress calculations
-  const expProgress = Math.min(100, Math.round((learning.expenseCount / learning.expenseThreshold) * 100));
-  const dayProgress = Math.min(100, Math.round((learning.distinctDaysCount / learning.distinctDaysThreshold) * 100));
-  const overallProgress = learning.status === 'ready' ? 100 : Math.round((expProgress + dayProgress) / 2);
+  const allowance = data?.allowance;
+  const coverage = data?.coverage;
+  const nonSafeInsights = (data?.insights || []).filter((i) => i.type !== 'safe_to_spend');
+  const silentFlags = data?.silentFlags || [];
 
   return (
     <div className="flex min-h-screen flex-col pb-20">
       <Navbar />
 
-      <main className="flex-1 px-4 py-4 space-y-6">
-        {/* 1. Learning State Progress Banner */}
-        <section className="glass-panel relative overflow-hidden rounded-3xl p-5 shadow-xl">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-emerald-400" />
-              <h2 className="text-sm font-bold uppercase tracking-wider text-white">
-                Engine Status
-              </h2>
-            </div>
-            <span
-              className={`rounded-lg px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider ${
-                learning.status === 'ready'
-                  ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-400/40'
-                  : 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-400/40'
-              }`}
-            >
-              {learning.status === 'ready' ? 'Active' : 'Learning'}
-            </span>
-          </div>
-
-          <div className="mt-3">
-            <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5 font-medium">
-              <span>Baseline Confidence</span>
-              <span className="font-bold text-white">{overallProgress}%</span>
-            </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-500"
-                style={{ width: `${overallProgress}%` }}
-              />
-            </div>
-          </div>
-
-          {learning.status === 'learning' ? (
-            <p className="mt-3 text-xs text-slate-400 leading-relaxed">
-              SpendCoach is observing your habits. Needs{' '}
-              <strong className="text-amber-300 font-semibold">{learning.expensesNeeded} more expenses</strong>{' '}
-              and{' '}
-              <strong className="text-amber-300 font-semibold">{learning.daysNeeded} more days</strong> of data
-              before anomaly detection activates.
+      <main className="flex-1 px-4 py-6 space-y-6 max-w-2xl mx-auto w-full">
+        {/* Header & Refresh */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+              <Sparkles className="w-6 h-6 text-indigo-400" />
+              Coach Brain
+            </h1>
+            <p className="text-xs text-white/60">
+              Ranked, high-signal financial intelligence & safe-to-spend
             </p>
-          ) : (
-            <p className="mt-3 text-xs text-emerald-400/90 flex items-center gap-1.5">
-              <CheckCircle2 className="h-4 w-4 shrink-0" />
-              <span>Personal baseline established. Anomaly alerts active.</span>
-            </p>
-          )}
-        </section>
-
-        {/* 2. Detected Transaction Anomalies */}
-        <section className="space-y-3">
-          <div className="flex items-center justify-between px-1">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-              <AlertTriangle className="h-4 w-4 text-amber-400" />
-              <span>Anomalies Flagged</span>
-            </h3>
-            <span className="text-xs text-slate-500 font-medium">
-              {transactionAnomalies.length} found
-            </span>
           </div>
+          <button
+            onClick={() => {
+              setRefreshing(true);
+              fetchInsights(true);
+            }}
+            disabled={refreshing}
+            className="p-2 rounded-xl bg-white/5 hover:bg-white/10 active:scale-95 transition-all text-white/70"
+            title="Refresh Analysis"
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
 
-          {transactionAnomalies.length === 0 ? (
-            <div className="glass-panel flex flex-col items-center justify-center rounded-2xl py-8 text-center">
-              <CheckCircle2 className="h-7 w-7 text-emerald-400 mb-1.5" />
-              <p className="text-xs font-semibold text-slate-300">No unusual spending detected</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">All transactions align with your historical median.</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {transactionAnomalies.map((a) => (
-                <div
-                  key={a.expenseId}
-                  className="glass-card relative overflow-hidden rounded-2xl p-4 border-l-4 border-l-amber-400"
+        {/* Coverage Strip */}
+        {coverage && (
+          <div className="glass-card p-3 rounded-2xl flex flex-col gap-2 text-xs text-white/70">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5 font-medium text-white/90">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                Data Confidence: {coverage.daysClosed} days closed • {coverage.weeksOfHistory} weeks history
+              </span>
+              {coverage.reasons.length > 0 && (
+                <button
+                  onClick={() => setShowCoverageReasons(!showCoverageReasons)}
+                  className="text-indigo-400 hover:text-indigo-300 flex items-center gap-0.5"
                 >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <CategoryBadge category={a.category} size="sm" />
-                        <span className="text-xs text-slate-400">{formatDisplayDate(a.spentOn)}</span>
-                      </div>
-                      {a.merchant && (
-                        <p className="text-xs font-semibold text-white mt-1">{a.merchant}</p>
-                      )}
-                      <p className="text-xs font-medium text-amber-300 mt-1">{a.reason}</p>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-sm font-black text-amber-400">
-                        {formatPaise(a.amountPaise)}
-                      </span>
-                      <span className="block text-[10px] text-slate-500">
-                        Median: {formatPaise(a.medianPaise)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              ))}
+                  {showCoverageReasons ? 'Hide details' : 'View details'}
+                  {showCoverageReasons ? (
+                    <ChevronUp className="w-3 h-3" />
+                  ) : (
+                    <ChevronDown className="w-3 h-3" />
+                  )}
+                </button>
+              )}
             </div>
-          )}
-        </section>
 
-        {/* 3. Daily Total Anomalies (if any) */}
-        {dailyAnomalies.length > 0 && (
-          <section className="space-y-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 px-1">
-              Unusual Daily Spikes
-            </h3>
-            <div className="space-y-2">
-              {dailyAnomalies.map((da) => (
-                <div key={da.date} className="glass-card rounded-2xl p-3.5 flex items-center justify-between">
-                  <div>
-                    <span className="text-xs font-bold text-white">{formatDisplayDate(da.date)}</span>
-                    <p className="text-xs text-amber-300 mt-0.5">{da.reason}</p>
+            {showCoverageReasons && coverage.reasons.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-white/5 space-y-1 text-white/60">
+                {coverage.reasons.map((r, i) => (
+                  <div key={i} className="flex items-center gap-1.5">
+                    <span className="w-1 h-1 rounded-full bg-indigo-400" />
+                    <span>{r}</span>
                   </div>
-                  <div className="text-right">
-                    <span className="text-sm font-bold text-amber-400">{formatPaise(da.totalPaise)}</span>
-                    <span className="block text-[10px] text-slate-500">Median: {formatPaise(da.medianPaise)}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
+                ))}
+              </div>
+            )}
+          </div>
         )}
 
-        {/* 4. Recurring Charges */}
-        <section className="space-y-3">
-          <div className="flex items-center justify-between px-1">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-              <RefreshCw className="h-4 w-4 text-emerald-400" />
-              <span>Recurring Subscriptions</span>
-            </h3>
-            <span className="text-xs text-slate-500 font-medium">
-              {recurring.length} active
+        {/* 1. Safe-to-Spend Allowance Card (Top) */}
+        {allowance ? (
+          <div className="glass-card p-5 rounded-3xl relative overflow-hidden border border-indigo-500/20 bg-gradient-to-br from-indigo-950/40 via-purple-950/20 to-slate-900/60 shadow-xl">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs uppercase tracking-wider font-semibold text-indigo-300 flex items-center gap-1.5">
+                <DollarSign className="w-3.5 h-3.5" />
+                Tonight&apos;s Safe-to-Spend
+              </span>
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                  allowance.verdict === 'under'
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                    : allowance.verdict === 'over'
+                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                    : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                }`}
+              >
+                {allowance.verdict === 'under'
+                  ? 'Under Pace'
+                  : allowance.verdict === 'over'
+                  ? 'Over Pace'
+                  : 'On Track'}
+              </span>
+            </div>
+
+            <div className="flex items-baseline justify-between mb-4">
+              <div>
+                <div className="text-3xl font-extrabold text-white tracking-tight">
+                  {formatPaise(allowance.dailyAllowancePaise)}
+                  <span className="text-xs text-white/50 font-normal ml-1">/ day</span>
+                </div>
+                <div className="text-xs text-white/60 mt-0.5">
+                  Today&apos;s spend: <span className="font-semibold text-white">{formatPaise(allowance.todaySpentPaise)}</span>
+                </div>
+              </div>
+
+              <div className="text-right">
+                <div className="text-xs text-white/50">Tomorrow&apos;s Allowance</div>
+                <div className="text-base font-bold text-indigo-300">
+                  {formatPaise(allowance.tomorrowDailyAllowancePaise)}
+                </div>
+                {allowance.tomorrowWeekdayAllowancePaise !== allowance.tomorrowDailyAllowancePaise && (
+                  <div className="text-[10px] text-white/50">
+                    Weekday-weighted: {formatPaise(allowance.tomorrowWeekdayAllowancePaise)}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Budget Breakdown Chips */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3 border-t border-white/10 text-xs">
+              <div className="bg-black/20 p-2 rounded-xl">
+                <div className="text-white/40 text-[10px]">Income</div>
+                <div className="font-semibold text-white">{formatPaise(allowance.monthlyIncomePaise)}</div>
+              </div>
+              <div className="bg-black/20 p-2 rounded-xl">
+                <div className="text-white/40 text-[10px]">Fixed Commitments</div>
+                <div className="font-semibold text-rose-300">-{formatPaise(allowance.committedDuePaise)}</div>
+              </div>
+              <div className="bg-black/20 p-2 rounded-xl">
+                <div className="text-white/40 text-[10px]">20% Savings Target</div>
+                <div className="font-semibold text-emerald-300">-{formatPaise(allowance.savingsTargetPaise)}</div>
+              </div>
+              <div className="bg-black/20 p-2 rounded-xl">
+                <div className="text-white/40 text-[10px]">Discretionary Left</div>
+                <div className="font-semibold text-indigo-200">
+                  {formatPaise(allowance.remainingDiscretionaryPaise)} ({allowance.daysLeftInMonth}d)
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="glass-card p-5 rounded-3xl text-center text-white/60 text-xs">
+            Add an income schedule on <a href="/commitments" className="text-indigo-400 underline">Commitments</a> to unlock your automated Safe-to-Spend daily allowance.
+          </div>
+        )}
+
+        {/* 2. Ranked Insights Section */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-white/70">
+              Ranked Coach Insights
+            </h2>
+            <span className="text-xs text-white/40">
+              {nonSafeInsights.length} surfacing
             </span>
           </div>
 
-          {recurring.length === 0 ? (
-            <div className="glass-panel flex flex-col items-center justify-center rounded-2xl py-8 text-center">
-              <Clock className="h-7 w-7 text-slate-600 mb-1.5" />
-              <p className="text-xs font-semibold text-slate-300">No recurring items identified</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">Identifies weekly/monthly patterns after 3 occurrences.</p>
+          {nonSafeInsights.length === 0 ? (
+            <div className="glass-card p-8 rounded-3xl text-center space-y-2">
+              <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto" />
+              <h3 className="font-semibold text-white">Nothing notable today</h3>
+              <p className="text-xs text-white/60 max-w-sm mx-auto">
+                Your spending is smooth and running within normal baselines. No uncharacteristic spikes or drift detected. Silence is a valid answer.
+              </p>
             </div>
           ) : (
-            <div className="space-y-2">
-              {recurring.map((item) => (
-                <div key={item.id} className="glass-card rounded-2xl p-3.5 flex items-center justify-between">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold text-white">{item.merchantOrNote}</span>
-                      <span className="rounded-md bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-400 capitalize">
-                        {item.interval}
+            <div className="space-y-4">
+              {nonSafeInsights.map((insight, idx) => (
+                <div
+                  key={insight.id}
+                  className="glass-card p-5 rounded-3xl relative overflow-hidden space-y-3.5 border border-white/10 hover:border-white/20 transition-all"
+                >
+                  {/* Top Bar: Rank, Title, Severity Badge */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-2.5">
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full bg-white/10 text-white/80 font-bold text-xs flex items-center justify-center">
+                        {idx + 1}
                       </span>
+                      <div>
+                        <h3 className="text-sm font-bold text-white leading-snug">
+                          {insight.title}
+                        </h3>
+                        <div className="text-[11px] text-white/50 capitalize mt-0.5">
+                          {insight.type.replace('_', ' ')} • Est. Impact: {formatPaise(insight.impactPaise)}/mo
+                        </div>
+                      </div>
                     </div>
-                    <span className="flex items-center gap-1 text-[11px] text-slate-400 mt-0.5">
-                      <Calendar className="h-3 w-3 text-slate-500" />
-                      <span>Next: {formatDisplayDate(item.nextExpectedDate)}</span>
+
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${
+                        insight.severity === 'alert'
+                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                          : insight.severity === 'warning'
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                          : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                      }`}
+                    >
+                      {insight.severity.toUpperCase()}
                     </span>
                   </div>
-                  <div className="text-right">
-                    <span className="text-sm font-bold text-white">
-                      {formatPaise(item.estimatedAmountPaise)}
-                    </span>
-                    <span className="block text-[10px] text-slate-500">
-                      ~{formatPaise(item.monthlyCostEstimatePaise)}/mo
-                    </span>
+
+                  {/* Structured Evidence Chips */}
+                  <div className="bg-black/25 p-3 rounded-2xl flex flex-wrap gap-2 text-[11px] text-white/80">
+                    {Object.entries(insight.evidence || {}).map(([k, v]) => {
+                      if (v === null || v === undefined || typeof v === 'object') return null;
+                      const label = k.replace(/Paise$/, '').replace(/([A-Z])/g, ' $1');
+                      const displayVal = k.toLowerCase().includes('paise')
+                        ? formatPaise(Number(v))
+                        : String(v);
+
+                      return (
+                        <span
+                          key={k}
+                          className="bg-white/5 px-2 py-1 rounded-lg border border-white/5"
+                        >
+                          <span className="text-white/40 capitalize">{label}: </span>
+                          <span className="font-medium text-white">{displayVal}</span>
+                        </span>
+                      );
+                    })}
+                  </div>
+
+                  {/* Levers Box (Actionable Steps) */}
+                  {insight.levers && insight.levers.length > 0 && (
+                    <div className="space-y-1.5 pt-1">
+                      <div className="text-[11px] font-semibold text-indigo-300 flex items-center gap-1">
+                        <Sliders className="w-3 h-3" />
+                        Actionable Levers:
+                      </div>
+                      <div className="space-y-1">
+                        {insight.levers.map((lever) => (
+                          <div
+                            key={lever.id}
+                            className="bg-indigo-950/30 border border-indigo-500/20 p-2.5 rounded-xl text-xs flex items-center justify-between"
+                          >
+                            <span className="text-white/90">{lever.description}</span>
+                            {lever.monthlySavingPaise > 0 && (
+                              <span className="font-semibold text-emerald-400 text-xs ml-2 flex-shrink-0">
+                                Save ~{formatPaise(lever.monthlySavingPaise)}/mo
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Per-card Memory & Feedback Controls */}
+                  <div className="pt-2 border-t border-white/5 flex items-center justify-between gap-2">
+                    <span className="text-[10px] text-white/40">Is this helpful?</span>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => handleFeedback(insight.id, 'not_now')}
+                        disabled={feedbackPending === insight.id}
+                        className="px-2.5 py-1 rounded-lg text-xs font-medium bg-white/5 hover:bg-white/10 active:scale-95 text-white/60 transition-all flex items-center gap-1"
+                        title="Dismiss for 3 days"
+                      >
+                        <Clock className="w-3 h-3" />
+                        Not now
+                      </button>
+
+                      <button
+                        onClick={() => handleFeedback(insight.id, 'not_useful')}
+                        disabled={feedbackPending === insight.id}
+                        className="px-2.5 py-1 rounded-lg text-xs font-medium bg-white/5 hover:bg-white/10 active:scale-95 text-white/60 transition-all flex items-center gap-1"
+                        title="Dismiss permanently"
+                      >
+                        <X className="w-3 h-3" />
+                        Not useful
+                      </button>
+
+                      {/* Planned button for outliers / spikes */}
+                      {(insight.type === 'outlier' || insight.expenseId) && (
+                        <button
+                          onClick={() =>
+                            handleFeedback(insight.id, 'planned', insight.expenseId)
+                          }
+                          disabled={feedbackPending === insight.id}
+                          className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/30 active:scale-95 transition-all flex items-center gap-1"
+                          title="Mark as planned one-off expense (removes from baselines)"
+                        >
+                          <BookmarkCheck className="w-3 h-3 text-indigo-300" />
+                          Planned One-Off
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
           )}
-        </section>
+        </div>
 
-        {/* 5. Month-End Run-Rate & Budget Status */}
-        <section className="space-y-3">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 px-1 flex items-center gap-1.5">
-            <PieChart className="h-4 w-4 text-emerald-400" />
-            <span>Monthly Run-Rate & Budgets</span>
-          </h3>
-
-          <div className="glass-panel rounded-3xl p-5 shadow-xl space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
-                  Projected Month-End
-                </span>
-                <h4 className="text-2xl font-black text-white mt-0.5">
-                  {formatPaise(budgetRunRate.projectedMonthEndPaise)}
-                </h4>
-                <span className="text-xs text-slate-400">
-                  Spent so far: {formatPaise(budgetRunRate.spentSoFarPaise)}
-                </span>
-              </div>
-
-              <span
-                className={`rounded-xl px-3 py-1.5 text-xs font-bold uppercase tracking-wider ${
-                  budgetRunRate.budgetStatus === 'over'
-                    ? 'bg-rose-500/20 text-rose-300 ring-1 ring-rose-500/30'
-                    : budgetRunRate.budgetStatus === 'warning'
-                    ? 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/30'
-                    : 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/30'
-                }`}
-              >
-                {budgetRunRate.budgetStatus.replace('_', ' ')}
+        {/* 3. Filtered Noise / Silent Flags (Collapsible) */}
+        {silentFlags.length > 0 && (
+          <div className="glass-card p-4 rounded-3xl text-xs space-y-2 border border-white/5">
+            <button
+              onClick={() => setShowNoise(!showNoise)}
+              className="w-full flex items-center justify-between text-white/60 hover:text-white"
+            >
+              <span className="flex items-center gap-1.5 font-medium">
+                <EyeOff className="w-3.5 h-3.5 text-white/40" />
+                Filtered Outlier Noise ({silentFlags.length} items stayed silent)
               </span>
-            </div>
+              {showNoise ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </button>
 
-            {/* Category Run-Rate Progress Bars */}
-            <div className="space-y-3 pt-2 border-t border-slate-800">
-              {budgetRunRate.categories.map((c) => {
-                if (c.spentSoFarPaise === 0 && !c.monthlyLimitPaise) return null;
-                return (
-                  <div key={c.category} className="space-y-1">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-medium text-white">{c.category}</span>
-                      <span className="text-slate-400">
-                        {formatPaise(c.spentSoFarPaise)}{' '}
-                        {c.monthlyLimitPaise ? `/ ${formatPaise(c.monthlyLimitPaise)}` : ''}
-                      </span>
+            {showNoise && (
+              <div className="pt-2 border-t border-white/5 space-y-2">
+                <p className="text-[11px] text-white/40">
+                  These items were statistical variations but stayed silent because they did not meet the ₹500 floor or 5% budget threshold.
+                </p>
+                <div className="space-y-1.5">
+                  {silentFlags.map((flag) => (
+                    <div
+                      key={flag.id}
+                      className="bg-black/20 p-2.5 rounded-xl flex items-center justify-between text-white/70"
+                    >
+                      <span className="font-medium text-white/90">{flag.title}</span>
+                      <span className="text-[10px] text-white/40">{flag.reason}</span>
                     </div>
-
-                    {c.monthlyLimitPaise && c.monthlyLimitPaise > 0 ? (
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
-                        <div
-                          className={`h-full rounded-full transition-all ${
-                            c.budgetStatus === 'over'
-                              ? 'bg-rose-500'
-                              : c.budgetStatus === 'warning'
-                              ? 'bg-amber-400'
-                              : 'bg-emerald-400'
-                          }`}
-                          style={{
-                            width: `${Math.min(100, (c.spentSoFarPaise / c.monthlyLimitPaise) * 100)}%`,
-                          }}
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-
-        {/* 6. Spending Trends (WoW and MoM) */}
-        <section className="space-y-3">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 px-1 flex items-center gap-1.5">
-            <TrendingUp className="h-4 w-4 text-emerald-400" />
-            <span>Spending Trends</span>
-          </h3>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="glass-card rounded-2xl p-4">
-              <span className="text-[11px] font-medium text-slate-400">Last 7 Days vs Prior</span>
-              <div className="flex items-center gap-1.5 mt-1.5">
-                {trends.weekOverWeekPercent !== null && trends.weekOverWeekPercent > 0 ? (
-                  <TrendingUp className="h-4 w-4 text-rose-400 shrink-0" />
-                ) : (
-                  <TrendingDown className="h-4 w-4 text-emerald-400 shrink-0" />
-                )}
-                <span className="text-lg font-bold text-white">
-                  {trends.weekOverWeekPercent !== null
-                    ? `${trends.weekOverWeekPercent > 0 ? '+' : ''}${trends.weekOverWeekPercent}%`
-                    : 'N/A'}
-                </span>
-              </div>
-              <span className="block text-[10px] text-slate-500 mt-0.5">
-                {formatPaise(trends.last7DaysPaise)} vs {formatPaise(trends.prev7DaysPaise)}
-              </span>
-            </div>
-
-            <div className="glass-card rounded-2xl p-4">
-              <span className="text-[11px] font-medium text-slate-400">Month-to-Date vs Prior</span>
-              <div className="flex items-center gap-1.5 mt-1.5">
-                {trends.monthOverMonthPercent !== null && trends.monthOverMonthPercent > 0 ? (
-                  <TrendingUp className="h-4 w-4 text-rose-400 shrink-0" />
-                ) : (
-                  <TrendingDown className="h-4 w-4 text-emerald-400 shrink-0" />
-                )}
-                <span className="text-lg font-bold text-white">
-                  {trends.monthOverMonthPercent !== null
-                    ? `${trends.monthOverMonthPercent > 0 ? '+' : ''}${trends.monthOverMonthPercent}%`
-                    : 'N/A'}
-                </span>
-              </div>
-              <span className="block text-[10px] text-slate-500 mt-0.5">
-                {formatPaise(trends.currentMonthToDatePaise)} vs {formatPaise(trends.prevMonthToDatePaise)}
-              </span>
-            </div>
-          </div>
-        </section>
-
-        {/* 7. Category Budget Settings */}
-        <section className="space-y-3">
-          <div className="flex items-center justify-between px-1">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-              Manage Monthly Budgets
-            </h3>
-            <span className="text-[11px] text-slate-500">₹ per month</span>
-          </div>
-
-          <div className="glass-panel rounded-3xl p-4 divide-y divide-slate-800/80">
-            {EXPENSE_CATEGORIES.map((cat) => (
-              <div key={cat} className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0">
-                <div className="flex items-center gap-2">
-                  <CategoryBadge category={cat} size="sm" showLabel={true} />
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <div className="relative flex items-center">
-                    <span className="absolute left-2.5 text-xs text-slate-500">₹</span>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      pattern="[0-9]*[.,]?[0-9]*"
-                      placeholder="0.00"
-                      value={budgetInputs[cat] || ''}
-                      onChange={(e) =>
-                        setBudgetInputs({
-                          ...budgetInputs,
-                          [cat]: e.target.value.replace(/[^0-9.]/g, ''),
-                        })
-                      }
-                      className="w-24 rounded-xl border border-slate-800 bg-slate-900/90 py-1.5 pl-6 pr-2 text-right text-xs font-bold text-white outline-none focus:border-emerald-500"
-                    />
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => handleSaveBudget(cat)}
-                    disabled={savingCategory === cat}
-                    className={`flex min-h-[36px] min-w-[36px] items-center justify-center rounded-xl transition ${
-                      saveSuccess === cat
-                        ? 'bg-emerald-500/20 text-emerald-400'
-                        : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700'
-                    }`}
-                    title="Save budget"
-                  >
-                    {saveSuccess === cat ? (
-                      <CheckCircle2 className="h-4 w-4" />
-                    ) : (
-                      <Save className="h-4 w-4" />
-                    )}
-                  </button>
+                  ))}
                 </div>
               </div>
-            ))}
+            )}
           </div>
-        </section>
+        )}
+
+        {/* 4. Category Budgets Drawer / Section */}
+        <div className="glass-card p-4 rounded-3xl text-xs space-y-3 border border-white/5">
+          <button
+            onClick={() => setShowBudgets(!showBudgets)}
+            className="w-full flex items-center justify-between text-white/70 hover:text-white font-medium"
+          >
+            <span className="flex items-center gap-1.5">
+              <Sliders className="w-3.5 h-3.5 text-indigo-400" />
+              Manage Category Monthly Budgets
+            </span>
+            {showBudgets ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+
+          {showBudgets && data?.budgetRunRate?.categories && (
+            <div className="pt-2 border-t border-white/5 space-y-2.5">
+              {data.budgetRunRate.categories.map((cat) => (
+                <div
+                  key={cat.category}
+                  className="flex items-center justify-between gap-3 bg-black/20 p-2.5 rounded-xl"
+                >
+                  <div className="min-w-0">
+                    <div className="font-semibold text-white">{cat.category}</div>
+                    <div className="text-[10px] text-white/50">
+                      Spent: {formatPaise(cat.spentSoFarPaise)} • Projected: {formatPaise(cat.projectedMonthEndPaise)}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/40 text-xs">
+                        ₹
+                      </span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={budgetInputs[cat.category] || ''}
+                        onChange={(e) =>
+                          setBudgetInputs({
+                            ...budgetInputs,
+                            [cat.category]: e.target.value,
+                          })
+                        }
+                        placeholder="Limit"
+                        className="w-24 pl-6 pr-2 py-1 text-xs bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-indigo-400 text-right"
+                      />
+                    </div>
+                    <button
+                      onClick={() => handleSaveBudget(cat.category)}
+                      disabled={savingCategory === cat.category}
+                      className="px-2.5 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-500/30 text-xs font-medium"
+                    >
+                      {saveSuccess === cat.category ? 'Saved' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </main>
     </div>
   );
