@@ -13,9 +13,9 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://dummy:dummy@localhost:5432/dummy
-      APP_PASSCODE: "1234"
-      SESSION_SECRET: "spendcoach_ci_dummy_secret_at_least_32_characters_long!"
-      CRON_SECRET: "spendcoach_ci_cron_secret"
+      APP_PASSCODE: "spendcoach-ci-passcode-secure-999"
+      SESSION_SECRET: "spendcoach_ci_dummy_secret_at_least_32_characters_long_now!"
+      CRON_SECRET: "spendcoach_ci_cron_secret_at_least_32_characters_long!"
 
     steps:
       - name: Checkout code
