@@ -3,6 +3,14 @@
     {
       "path": "/api/cron/daily-review",
       "schedule": "30 12 * * *"
+    },
+    {
+      "path": "/api/reviews/weekly",
+      "schedule": "30 3 * * 0"
+    },
+    {
+      "path": "/api/reviews/monthly",
+      "schedule": "30 3 1 * *"
     }
   ]
 }
