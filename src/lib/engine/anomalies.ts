@@ -19,6 +19,7 @@ const MIN_WEEKDAY_POINTS = 4;
 /**
  * Evaluates individual transaction anomalies and daily total anomalies.
  * If overall status is 'learning', returns empty arrays.
+ * Excludes kind != 'spend', source == 'schedule', and one_off == true from baselines.
  */
 export function detectAnomalies(
   expenses: EngineExpense[],
@@ -49,11 +50,20 @@ function detectTransactionAnomalies(
   // Consider all expenses within trailing 90 days of now
   const pool = expenses.filter((e) => e.spentOn >= minDate && e.spentOn <= now);
 
-  for (const exp of pool) {
+  // Eligible candidates and baseline pool:
+  // EXCLUDE kind != 'spend', source == 'schedule', and one_off == true
+  const baselinePool = pool.filter(
+    (e) =>
+      (e.kind ?? 'spend') === 'spend' &&
+      (e.source ?? 'manual') !== 'schedule' &&
+      !e.oneOff
+  );
+
+  for (const exp of baselinePool) {
     const isCategoryReady = learning.categories[exp.category]?.status === 'ready';
 
     // Baseline pool EXCLUDING the transaction being evaluated
-    const baselineExpenses = pool.filter((other) => other.id !== exp.id);
+    const baselineExpenses = baselinePool.filter((other) => other.id !== exp.id);
 
     let baselineAmounts: number[];
     let baselineType: 'category' | 'overall';
@@ -122,12 +132,34 @@ function detectDailyAnomalies(
   const anomalies: DailyTotalAnomaly[] = [];
   const minDate = addDays(now, -DAILY_WINDOW_DAYS);
 
-  // Group all daily totals within trailing 8 weeks (56 days)
+  // Group daily totals (only discretionary spend; exclude kind != 'spend' and source == 'schedule')
+  // Note: one-offs still count in the day's total!
   const dailyTotals = new Map<string, number>();
+
+  // Baseline totals: exclude one-offs from baselines
+  const dailyBaselineTotals = new Map<string, number>();
 
   for (const exp of expenses) {
     if (exp.spentOn >= minDate && exp.spentOn <= now) {
-      dailyTotals.set(exp.spentOn, (dailyTotals.get(exp.spentOn) || 0) + exp.amountPaise);
+      const isDiscretionary =
+        (exp.kind ?? 'spend') === 'spend' &&
+        (exp.source ?? 'manual') !== 'schedule';
+
+      if (isDiscretionary) {
+        // One-offs still count in daily totals
+        dailyTotals.set(
+          exp.spentOn,
+          (dailyTotals.get(exp.spentOn) || 0) + exp.amountPaise
+        );
+
+        // But one-offs are excluded from baseline calculations
+        if (!exp.oneOff) {
+          dailyBaselineTotals.set(
+            exp.spentOn,
+            (dailyBaselineTotals.get(exp.spentOn) || 0) + exp.amountPaise
+          );
+        }
+      }
     }
   }
 
@@ -137,16 +169,17 @@ function detectDailyAnomalies(
     const totalPaise = dailyTotals.get(dateStr) || 0;
     const weekday = getWeekdayName(dateStr);
 
-    // Weekday history in trailing 8 weeks EXCLUDING the day being evaluated
+    // Weekday baseline history in trailing 8 weeks EXCLUDING the day being evaluated
     const weekdayHistory: number[] = [];
     const allDaysHistory: number[] = [];
 
-    for (const [otherDate, otherTotal] of dailyTotals.entries()) {
+    for (const otherDate of allDates) {
       if (otherDate === dateStr) continue;
 
-      allDaysHistory.push(otherTotal);
+      const baselineVal = dailyBaselineTotals.get(otherDate) || 0;
+      allDaysHistory.push(baselineVal);
       if (getWeekdayName(otherDate) === weekday) {
-        weekdayHistory.push(otherTotal);
+        weekdayHistory.push(baselineVal);
       }
     }
 

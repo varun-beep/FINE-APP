@@ -1,24 +1,26 @@
 import type {
   EngineExpense,
   EngineBudget,
+  EngineSchedule,
   RecurringItem,
   OverallBudgetRunRate,
   CategoryBudgetRunRate,
   BudgetStatus,
 } from './types';
 import { getDaysInMonth } from './math';
-import { normalizeMerchantKey } from './recurring';
+import { dueDates } from '../schedules';
 import { EXPENSE_CATEGORIES } from '../validations';
 
 /**
- * Calculates current month spent-so-far, projected month-end (linear run rate blended with recurring),
- * and budget statuses for all categories and overall.
+ * Calculates current month spent-so-far, projected month-end, and budget statuses.
+ * Committed items due for the rest of the month are added as certain spend, not extrapolated.
  */
 export function calculateBudgetRunRate(
   expenses: EngineExpense[],
   budgets: EngineBudget[] | undefined,
   recurring: RecurringItem[],
-  now: string
+  now: string,
+  schedules?: EngineSchedule[]
 ): OverallBudgetRunRate {
   const [yearStr, monthStr, dayStr] = now.split('-');
   const year = parseInt(yearStr, 10);
@@ -36,51 +38,53 @@ export function calculateBudgetRunRate(
     }
   }
 
-  // Filter expenses strictly belonging to the current month up to 'now'
+  // Filter expenses strictly belonging to the current month up to 'now' (only spend, not investment or income)
   const currentMonthExpenses = expenses.filter(
-    (e) => e.spentOn.startsWith(currentMonthPrefix) && e.spentOn <= now
+    (e) =>
+      e.spentOn.startsWith(currentMonthPrefix) &&
+      e.spentOn <= now &&
+      (e.kind ?? 'spend') === 'spend'
   );
 
-  // Group recurring items by category
-  const recurringByKey = new Map<string, RecurringItem>();
-  for (const r of recurring) {
-    recurringByKey.set(r.key, r);
+  // Precompute committed items due for rest of month from schedules
+  const committedUpcomingByCat = new Map<string, number>();
+  let totalCommittedUpcoming = 0;
+
+  if (schedules && schedules.length > 0) {
+    const activeSpendSchedules = schedules.filter(
+      (s) => s.active && s.kind !== 'investment' && s.kind !== 'income'
+    );
+
+    for (const sched of activeSpendSchedules) {
+      const dates = dueDates(sched, now, monthEndDate);
+      const cost = dates.length * sched.amountPaise;
+      committedUpcomingByCat.set(
+        sched.category,
+        (committedUpcomingByCat.get(sched.category) || 0) + cost
+      );
+      totalCommittedUpcoming += cost;
+    }
   }
 
   // Helper to compute category projection
   const computeProjection = (
     catExpenses: EngineExpense[],
-    catRecurring: RecurringItem[]
+    committedUpcoming: number
   ) => {
     const spentSoFar = catExpenses.reduce((sum, e) => sum + e.amountPaise, 0);
 
-    // Identify recurring expenses already billed in current month
-    let recurringSpentSoFar = 0;
-    const billedRecurringKeys = new Set<string>();
+    // Identify fixed schedule expenses already billed in current month
+    const scheduledSpentSoFar = catExpenses
+      .filter((e) => e.source === 'schedule')
+      .reduce((sum, e) => sum + e.amountPaise, 0);
 
-    for (const e of catExpenses) {
-      const norm = normalizeMerchantKey(e.merchant, e.note);
-      if (norm && recurringByKey.has(norm.key)) {
-        recurringSpentSoFar += e.amountPaise;
-        billedRecurringKeys.add(norm.key);
-      }
-    }
-
-    // Identify upcoming recurring items expected before month-end
-    let upcomingRecurringExpected = 0;
-    for (const r of catRecurring) {
-      // Check if next expected date falls between now and month-end
-      if (r.nextExpectedDate > now && r.nextExpectedDate <= monthEndDate) {
-        upcomingRecurringExpected += r.estimatedAmountPaise;
-      }
-    }
-
-    // Discretionary spend projected linearly
-    const discretionarySpent = Math.max(0, spentSoFar - recurringSpentSoFar);
+    // Discretionary spend is linearly extrapolated
+    const discretionarySpent = Math.max(0, spentSoFar - scheduledSpentSoFar);
     const discretionaryProjected = (discretionarySpent * totalDaysInMonth) / elapsedDays;
 
+    // Committed items due for the rest of the month are added as certain spend, not extrapolated!
     const projectedMonthEnd = Math.round(
-      discretionaryProjected + recurringSpentSoFar + upcomingRecurringExpected
+      discretionaryProjected + scheduledSpentSoFar + committedUpcoming
     );
 
     return { spentSoFar, projectedMonthEnd };
@@ -91,9 +95,12 @@ export function calculateBudgetRunRate(
 
   for (const cat of EXPENSE_CATEGORIES) {
     const catExpenses = currentMonthExpenses.filter((e) => e.category === cat);
-    const catRecurring = recurring.filter((r) => r.category === cat);
+    const catCommitted = committedUpcomingByCat.get(cat) || 0;
 
-    const { spentSoFar, projectedMonthEnd } = computeProjection(catExpenses, catRecurring);
+    const { spentSoFar, projectedMonthEnd } = computeProjection(
+      catExpenses,
+      catCommitted
+    );
     const limit = budgetMap.get(cat) ?? null;
 
     let budgetStatus: BudgetStatus = 'on_track';
@@ -126,11 +133,12 @@ export function calculateBudgetRunRate(
 
   // Evaluate overall
   const { spentSoFar: overallSpent, projectedMonthEnd: overallProjected } =
-    computeProjection(currentMonthExpenses, recurring);
+    computeProjection(currentMonthExpenses, totalCommittedUpcoming);
 
-  const totalBudgetLimit = budgets && budgets.length > 0
-    ? budgets.reduce((sum, b) => sum + b.monthlyLimitPaise, 0)
-    : null;
+  const totalBudgetLimit =
+    budgets && budgets.length > 0
+      ? budgets.reduce((sum, b) => sum + b.monthlyLimitPaise, 0)
+      : null;
 
   let overallStatus: BudgetStatus = 'on_track';
   let overallPercentageUsed: number | null = null;
@@ -138,7 +146,9 @@ export function calculateBudgetRunRate(
 
   if (totalBudgetLimit && totalBudgetLimit > 0) {
     overallPercentageUsed = Math.round((overallSpent / totalBudgetLimit) * 100);
-    overallProjectedPercentage = Math.round((overallProjected / totalBudgetLimit) * 100);
+    overallProjectedPercentage = Math.round(
+      (overallProjected / totalBudgetLimit) * 100
+    );
 
     if (overallSpent > totalBudgetLimit || overallProjected > totalBudgetLimit) {
       overallStatus = 'over';

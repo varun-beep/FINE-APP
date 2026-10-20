@@ -16,7 +16,7 @@ export * from './trends';
 
 /**
  * Pure learning engine entrypoint:
- * Takes plain expense array and optional budgets/date.
+ * Takes plain expense array and optional budgets/date/schedules/closedDays.
  * Has NO network or database dependencies.
  */
 export function analyzeExpenses(
@@ -25,9 +25,11 @@ export function analyzeExpenses(
 ): EngineOutput {
   const now = options?.now || getKolkataToday();
   const budgets = options?.budgets;
+  const schedules = options?.schedules;
+  const closedDays = options?.closedDays;
 
-  // 1. Learning state
-  const learning = evaluateLearningState(expenses);
+  // 1. Learning state (counts only logged or no_spend closed days; excludes skipped days)
+  const learning = evaluateLearningState(expenses, closedDays);
 
   // 2. Anomalies (only if learning is 'ready')
   const { transactionAnomalies, dailyAnomalies } = detectAnomalies(
@@ -39,12 +41,13 @@ export function analyzeExpenses(
   // 3. Recurring detection
   const recurring = detectRecurring(expenses);
 
-  // 4. Budget & month-end run rate
+  // 4. Budget & month-end run rate (committed schedules for rest of month added as certain spend)
   const budgetRunRate = calculateBudgetRunRate(
     expenses,
     budgets,
     recurring,
-    now
+    now,
+    schedules
   );
 
   // 5. Trends

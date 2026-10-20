@@ -803,4 +803,160 @@ describe('SpendCoach Learning Engine', () => {
       expect(JSON.stringify(out1)).toBe(JSON.stringify(out2));
     });
   });
+
+  describe('9. Commitments, Day Closures & Baseline Exclusions', () => {
+    it('excludes kind != "spend" and source == "schedule" from transaction-anomaly baselines and candidates', () => {
+      // 35 normal food expenses of ₹200 (20000 paise)
+      const normalExpenses = generateExpenses(35, 16, 20000, 'Food', '2026-09-01');
+
+      // Add a massive scheduled gold expense (source='schedule', kind='investment')
+      const scheduledGold: EngineExpense = {
+        id: 'gold-1',
+        amountPaise: 5000000, // ₹50,000 (huge spike if treated as spend)
+        category: 'Investment',
+        spentOn: '2026-10-15',
+        kind: 'investment',
+        source: 'schedule',
+      };
+
+      // Add a massive scheduled OTT renewal (source='schedule', kind='spend')
+      const scheduledOtt: EngineExpense = {
+        id: 'ott-1',
+        amountPaise: 149900, // ₹1,499
+        category: 'Subscriptions',
+        spentOn: '2026-10-18',
+        kind: 'spend',
+        source: 'schedule',
+      };
+
+      const res = analyzeExpenses([...normalExpenses, scheduledGold, scheduledOtt], {
+        now: BASE_DATE,
+      });
+
+      // Scheduled items must NOT be flagged as anomalies
+      const flaggedIds = res.transactionAnomalies.map((a) => a.expenseId);
+      expect(flaggedIds).not.toContain('gold-1');
+      expect(flaggedIds).not.toContain('ott-1');
+    });
+
+    it('excludes one-off transactions from anomaly baselines and candidate alerts', () => {
+      const normalExpenses = generateExpenses(35, 16, 20000, 'Food', '2026-09-01');
+
+      // Add an intentional one-off purchase of ₹80,000 (e.g. buying a laptop)
+      const oneOffExpense: EngineExpense = {
+        id: 'laptop-1',
+        amountPaise: 8000000,
+        category: 'Shopping',
+        spentOn: '2026-10-12',
+        kind: 'spend',
+        source: 'manual',
+        oneOff: true,
+      };
+
+      const res = analyzeExpenses([...normalExpenses, oneOffExpense], {
+        now: BASE_DATE,
+      });
+
+      // One-off purchase must NOT be flagged as a transaction anomaly
+      const flaggedIds = res.transactionAnomalies.map((a) => a.expenseId);
+      expect(flaggedIds).not.toContain('laptop-1');
+    });
+
+    it('counts only closed days with status "logged" or "no_spend", strictly excluding "skipped" days', () => {
+      // 35 expenses spanning 20 dates
+      const expenses = generateExpenses(35, 20, 20000, 'Food', '2026-09-01');
+
+      // Provide closedDays where 10 are 'logged', 1 is 'no_spend', and 4 are 'skipped'
+      // Total valid closed days = 10 + 1 = 11 (< 14 threshold)
+      const closedDays = [
+        ...Array.from({ length: 10 }, (_, i) => ({
+          day: addDays('2026-09-01', i),
+          status: 'logged' as const,
+        })),
+        {
+          day: addDays('2026-09-01', 10),
+          status: 'no_spend' as const,
+        },
+        ...Array.from({ length: 4 }, (_, i) => ({
+          day: addDays('2026-09-01', 11 + i),
+          status: 'skipped' as const, // Must be excluded!
+        })),
+      ];
+
+      const res = analyzeExpenses(expenses, {
+        now: BASE_DATE,
+        closedDays,
+      });
+
+      // 11 valid closed days < 14 -> must remain in 'learning' state!
+      expect(res.learning.status).toBe('learning');
+      expect(res.learning.distinctDaysCount).toBe(11);
+      expect(res.learning.daysNeeded).toBe(3);
+    });
+
+    it('transitions to "ready" when valid closed days (logged + no_spend) reach 14', () => {
+      const expenses = generateExpenses(35, 20, 20000, 'Food', '2026-09-01');
+
+      // 12 logged + 2 no_spend + 3 skipped = 14 valid closed days
+      const closedDays = [
+        ...Array.from({ length: 12 }, (_, i) => ({
+          day: addDays('2026-09-01', i),
+          status: 'logged' as const,
+        })),
+        {
+          day: addDays('2026-09-01', 12),
+          status: 'no_spend' as const,
+        },
+        {
+          day: addDays('2026-09-01', 13),
+          status: 'no_spend' as const,
+        },
+        {
+          day: addDays('2026-09-01', 14),
+          status: 'skipped' as const,
+        },
+      ];
+
+      const res = analyzeExpenses(expenses, {
+        now: BASE_DATE,
+        closedDays,
+      });
+
+      expect(res.learning.status).toBe('ready');
+      expect(res.learning.distinctDaysCount).toBe(14);
+      expect(res.learning.daysNeeded).toBe(0);
+    });
+
+    it('adds committed schedule items due for rest of month as certain spend in budget run-rate', () => {
+      // Current date is 2026-10-20. Total days in Oct = 31, elapsed = 20.
+      // Spent so far on Subscriptions: 0
+      const activeSchedule = {
+        id: 'sched-netflix',
+        name: 'Netflix',
+        kind: 'subscription' as const,
+        category: 'Subscriptions',
+        amountPaise: 64900, // ₹649
+        frequency: 'monthly' as const,
+        anchorDate: '2026-01-25', // Due on 25th of month (between 20th and 31st)
+        startDate: '2026-01-01',
+        active: true,
+      };
+
+      const budget = [{ category: 'Subscriptions', monthlyLimitPaise: 100000 }];
+
+      const res = analyzeExpenses([], {
+        now: '2026-10-20',
+        budgets: budget,
+        schedules: [activeSchedule],
+      });
+
+      const subRunRate = res.budgetRunRate.categories.find(
+        (c) => c.category === 'Subscriptions'
+      );
+      expect(subRunRate).toBeDefined();
+      // Spent so far is 0, but projected month end must include the certain ₹649 upcoming charge
+      expect(subRunRate?.projectedMonthEndPaise).toBe(64900);
+    });
+  });
 });
+

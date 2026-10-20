@@ -11,6 +11,10 @@ export interface EngineExpense {
   merchant?: string | null;
   note?: string | null;
   createdAt?: Date | string | null;
+  kind?: 'spend' | 'investment' | 'income';
+  source?: 'manual' | 'schedule';
+  scheduleId?: string | null;
+  oneOff?: boolean;
 }
 
 export interface EngineBudget {
@@ -18,9 +22,30 @@ export interface EngineBudget {
   monthlyLimitPaise: number;
 }
 
+export interface EngineSchedule {
+  id: string;
+  name: string;
+  kind: 'subscription' | 'investment' | 'bill' | 'emi' | 'income';
+  category: string;
+  amountPaise: number;
+  frequency: 'daily' | 'weekly' | 'monthly' | 'yearly';
+  anchorDate: string;
+  startDate: string;
+  endDate?: string | null;
+  active: boolean;
+}
+
+export interface EngineDayClosure {
+  day: string;
+  status: 'logged' | 'no_spend' | 'skipped';
+  closedAt?: Date | string;
+}
+
 export interface EngineOptions {
   now?: string; // Reference date in YYYY-MM-DD (defaults to Asia/Kolkata today)
   budgets?: EngineBudget[];
+  schedules?: EngineSchedule[];
+  closedDays?: EngineDayClosure[];
 }
 
 export type LearningStatus = 'learning' | 'ready';

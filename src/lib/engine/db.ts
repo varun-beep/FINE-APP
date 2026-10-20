@@ -1,18 +1,33 @@
 import { db } from '@/db';
-import { expenses, budgets, reviews } from '@/db/schema';
+import { expenses, budgets, reviews, schedules, dayClosures } from '@/db/schema';
 import { analyzeExpenses } from './index';
-import type { EngineOutput, EngineExpense, EngineBudget } from './types';
+import type {
+  EngineOutput,
+  EngineExpense,
+  EngineBudget,
+  EngineSchedule,
+  EngineDayClosure,
+} from './types';
 import { getKolkataToday } from '../date';
+import { postDueSchedules } from '../schedules';
 import { eq, desc } from 'drizzle-orm';
 
 /**
- * Loads all expenses and budgets from the database,
+ * Loads all expenses, budgets, schedules, and day closures from the database,
  * runs the pure learning engine, and upserts the result into the reviews table.
+ * Calls postDueSchedules before recomputing so state is up-to-date.
  */
 export async function recomputeAndPersistEngine(targetDate?: string): Promise<EngineOutput> {
   const dateKey = targetDate || getKolkataToday();
 
-  // 1. Fetch expenses
+  // 1. Post any due schedules prior to recomputing
+  try {
+    await postDueSchedules(dateKey);
+  } catch (err) {
+    console.warn('[Engine Pre-Recompute Post Due Schedules Warning]:', err);
+  }
+
+  // 2. Fetch expenses
   const allExpenses = await db
     .select()
     .from(expenses)
@@ -26,22 +41,51 @@ export async function recomputeAndPersistEngine(targetDate?: string): Promise<En
     merchant: e.merchant,
     note: e.note,
     createdAt: e.createdAt,
+    kind: e.kind,
+    source: e.source,
+    scheduleId: e.scheduleId,
+    oneOff: e.oneOff,
   }));
 
-  // 2. Fetch budgets
+  // 3. Fetch budgets
   const allBudgets = await db.select().from(budgets);
   const engineBudgets: EngineBudget[] = allBudgets.map((b) => ({
     category: b.category,
     monthlyLimitPaise: b.monthlyLimitPaise,
   }));
 
-  // 3. Run pure engine
+  // 4. Fetch schedules
+  const allSchedules = await db.select().from(schedules);
+  const engineSchedules: EngineSchedule[] = allSchedules.map((s) => ({
+    id: s.id,
+    name: s.name,
+    kind: s.kind,
+    category: s.category,
+    amountPaise: s.amountPaise,
+    frequency: s.frequency,
+    anchorDate: s.anchorDate,
+    startDate: s.startDate,
+    endDate: s.endDate,
+    active: s.active,
+  }));
+
+  // 5. Fetch day closures
+  const allClosures = await db.select().from(dayClosures);
+  const engineClosures: EngineDayClosure[] = allClosures.map((c) => ({
+    day: c.day,
+    status: c.status,
+    closedAt: c.closedAt,
+  }));
+
+  // 6. Run pure engine
   const output = analyzeExpenses(engineExpenses, {
     now: dateKey,
     budgets: engineBudgets,
+    schedules: engineSchedules,
+    closedDays: engineClosures,
   });
 
-  // 4. Upsert snapshot into reviews table
+  // 7. Upsert snapshot into reviews table
   try {
     const adviceSummary = {
       anomalyCount: output.transactionAnomalies.length,
