@@ -5,7 +5,7 @@ import { createDayClosureSchema } from '@/lib/validations';
 import { getKolkataToday, getKolkataYesterday } from '@/lib/date';
 import { addDays } from '@/lib/engine/math';
 import { sql } from 'drizzle-orm';
-import { triggerAsyncRecompute } from '@/lib/engine/db';
+import { triggerAsyncRecompute, getLatestEngineOutput } from '@/lib/engine/db';
 
 export async function GET() {
   try {
@@ -34,11 +34,39 @@ export async function GET() {
       }
     }
 
+    // Calculate streak of consecutive closed days (logged or no_spend)
+    let streak = 0;
+    const today = getKolkataToday();
+    const isTodayClosed =
+      closedSet.get(today) === 'logged' || closedSet.get(today) === 'no_spend';
+
+    let checkDay = isTodayClosed ? today : getKolkataYesterday();
+    while (true) {
+      const st = closedSet.get(checkDay);
+      if (st === 'logged' || st === 'no_spend') {
+        streak++;
+        checkDay = addDays(checkDay, -1);
+      } else {
+        break;
+      }
+    }
+
+    // Fetch latest engine output for allowance
+    let allowance = null;
+    try {
+      const engineOutput = await getLatestEngineOutput(today);
+      allowance = engineOutput.allowance || null;
+    } catch {
+      // Non-critical
+    }
+
     return NextResponse.json({
       closures: allClosures,
       unclosedPastDays,
-      today: getKolkataToday(),
-      todayStatus: closedSet.get(getKolkataToday()) || null,
+      today,
+      todayStatus: closedSet.get(today) || null,
+      streak,
+      allowance,
     });
   } catch (error) {
     console.error('Error fetching day closures:', error);

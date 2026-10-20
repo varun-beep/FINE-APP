@@ -15,6 +15,7 @@ import {
   Repeat,
   Check,
   Edit2,
+  ArrowRight,
 } from 'lucide-react';
 import { EXPENSE_CATEGORIES, type ExpenseCategory } from '@/lib/validations';
 import type { Expense } from '@/db/schema';
@@ -47,6 +48,13 @@ export default function TonightEntryPage() {
   const [todayExpenses, setTodayExpenses] = useState<Expense[]>([]);
   const [unclosedPastDays, setUnclosedPastDays] = useState<string[]>([]);
   const [todayStatus, setTodayStatus] = useState<string | null>(null);
+  const [streak, setStreak] = useState<number>(0);
+  const [allowance, setAllowance] = useState<{
+    dailyAllowancePaise: number;
+    todaySpentPaise: number;
+    remainingDiscretionaryPaise: number;
+    verdict: string;
+  } | null>(null);
   const [orderedCategories, setOrderedCategories] = useState<ExpenseCategory[]>([...EXPENSE_CATEGORIES]);
   const [quickRepeatCombos, setQuickRepeatCombos] = useState<QuickRepeatCombo[]>([]);
   const [merchantCategoryMap, setMerchantCategoryMap] = useState<Map<string, ExpenseCategory>>(new Map());
@@ -78,6 +86,12 @@ export default function TonightEntryPage() {
         const closureData = await closureRes.json();
         setUnclosedPastDays(closureData.unclosedPastDays || []);
         setTodayStatus(closureData.todayStatus || null);
+        if (typeof closureData.streak === 'number') {
+          setStreak(closureData.streak);
+        }
+        if (closureData.allowance) {
+          setAllowance(closureData.allowance);
+        }
       }
 
       // 3. Fetch recent history to learn category frequency and quick-repeat combos
@@ -427,50 +441,159 @@ export default function TonightEntryPage() {
 
         {/* Tonight's Summary Header */}
         <div className="mb-4 rounded-3xl border border-slate-800 bg-slate-900/80 p-5 shadow-xl backdrop-blur-xl">
-          <div className="flex items-start justify-between">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
-                  {activeDate === today ? "Tonight's Entry" : `Entry for ${activeDate}`}
-                </span>
-                {todayStatus && activeDate === today && (
-                  <span className="rounded-lg bg-emerald-950/60 border border-emerald-800/40 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
-                    Closed: {todayStatus}
-                  </span>
-                )}
-                {activeDate !== today && (
-                  <button
-                    onClick={() => setActiveDate(today)}
-                    className="text-[11px] font-semibold text-emerald-400 underline"
-                  >
-                    Back to Today
-                  </button>
-                )}
-              </div>
-              <h1 className="mt-1 text-3xl font-black tracking-tight text-white">
-                {formatPaiseToRupees(discretionaryTotalPaise)}
-              </h1>
-              <span className="text-xs text-slate-400">
-                Discretionary spend logged today ({discretionaryExpenses.length} entries)
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                {activeDate === today ? "Tonight's Entry" : `Entry for ${activeDate}`}
               </span>
+              {todayStatus && activeDate === today && (
+                <span className="rounded-lg bg-emerald-950/60 border border-emerald-800/40 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
+                  Closed: {todayStatus}
+                </span>
+              )}
+              {activeDate !== today && (
+                <button
+                  onClick={() => setActiveDate(today)}
+                  className="text-[11px] font-semibold text-emerald-400 underline"
+                >
+                  Back to Today
+                </button>
+              )}
             </div>
+
+            {/* Streak Counter (no guilt copy if it breaks) */}
+            <div className="flex items-center gap-1.5 rounded-full bg-slate-800/80 border border-slate-700/60 px-2.5 py-1 text-[11px] font-semibold text-slate-300">
+              {streak > 0 ? (
+                <>
+                  <Flame className="h-3.5 w-3.5 text-amber-400" />
+                  <span>{streak} {streak === 1 ? 'day' : 'days'} closed in a row</span>
+                </>
+              ) : (
+                <span>Start your streak tonight</span>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            {/* Progress Ring & Allowance */}
+            {(() => {
+              const dailyLimit = allowance?.dailyAllowancePaise || 150000;
+              const spent = discretionaryTotalPaise;
+              const pct = Math.min(100, Math.round((spent / dailyLimit) * 100));
+
+              // Green / Amber / Red with text labels (never color alone)
+              const isComfortable = pct <= 70;
+              const isWarning = pct > 70 && pct <= 100;
+
+              const statusText = isComfortable
+                ? 'Comfortable'
+                : isWarning
+                ? 'Close to limit'
+                : 'Over allowance';
+
+              const strokeClass = isComfortable
+                ? 'text-emerald-500'
+                : isWarning
+                ? 'text-amber-500'
+                : 'text-rose-500';
+
+              const badgeClass = isComfortable
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                : isWarning
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                : 'bg-rose-500/20 text-rose-300 border-rose-500/40';
+
+              const radius = 26;
+              const circumference = 2 * Math.PI * radius;
+              const strokeDashoffset = circumference - (pct / 100) * circumference;
+
+              return (
+                <div className="flex items-center gap-3.5">
+                  {/* SVG Progress Ring */}
+                  <div className="relative flex h-16 w-16 shrink-0 items-center justify-center">
+                    <svg className="h-full w-full -rotate-90 transform" viewBox="0 0 64 64">
+                      {/* Background circle */}
+                      <circle
+                        cx="32"
+                        cy="32"
+                        r={radius}
+                        className="text-slate-800"
+                        strokeWidth="5"
+                        stroke="currentColor"
+                        fill="transparent"
+                      />
+                      {/* Animated Progress circle */}
+                      <circle
+                        cx="32"
+                        cy="32"
+                        r={radius}
+                        className={`${strokeClass} transition-all duration-700 motion-reduce:transition-none`}
+                        strokeWidth="5"
+                        strokeDasharray={circumference}
+                        strokeDashoffset={strokeDashoffset}
+                        strokeLinecap="round"
+                        stroke="currentColor"
+                        fill="transparent"
+                      />
+                    </svg>
+                    <span className="absolute text-[11px] font-bold text-white">
+                      {pct}%
+                    </span>
+                  </div>
+
+                  {/* Remaining Text with Label (Never color alone) */}
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xl font-black tracking-tight text-white sm:text-2xl">
+                        {formatPaiseToRupees(spent)}
+                      </span>
+                      <span className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${badgeClass}`}>
+                        {statusText}
+                      </span>
+                    </div>
+                    <span className="text-xs text-slate-400 block mt-0.5">
+                      {spent <= dailyLimit
+                        ? `${formatPaiseToRupees(dailyLimit - spent)} left of ${formatPaiseToRupees(dailyLimit)} daily allowance`
+                        : `${formatPaiseToRupees(spent - dailyLimit)} over ${formatPaiseToRupees(dailyLimit)} daily allowance`}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Done for today & No spend today controls */}
             {activeDate === today && (
-              <div className="flex flex-col gap-1.5 items-end">
-                <button
-                  onClick={() => handleCloseDay(today, 'logged')}
-                  className="flex min-h-[44px] items-center gap-1.5 rounded-2xl bg-emerald-600 px-4 text-xs font-black text-white shadow-lg shadow-emerald-950/40 transition hover:bg-emerald-500 active:scale-95"
-                >
-                  <Check className="h-4 w-4" />
-                  <span>Done for today</span>
-                </button>
-                <button
-                  onClick={() => handleCloseDay(today, 'no_spend')}
-                  className="text-[11px] font-semibold text-slate-400 hover:text-white transition"
-                >
-                  No spend today
-                </button>
+              <div className="flex flex-col gap-1.5 items-end justify-center">
+                {todayStatus ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-emerald-400">
+                      Day closed ({todayStatus}) ✓
+                    </span>
+                    <button
+                      onClick={() => router.push('/review')}
+                      className="flex min-h-[40px] items-center gap-1 rounded-xl bg-emerald-600/30 border border-emerald-500/50 px-3 text-xs font-bold text-emerald-200 transition hover:bg-emerald-600/50 active:scale-95"
+                    >
+                      <span>Daily Review</span>
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => handleCloseDay(today, 'logged')}
+                      className="flex min-h-[44px] items-center gap-1.5 rounded-2xl bg-emerald-600 px-4 text-xs font-black text-white shadow-lg shadow-emerald-950/40 transition hover:bg-emerald-500 active:scale-95"
+                    >
+                      <Check className="h-4 w-4" />
+                      <span>Done for today</span>
+                    </button>
+                    <button
+                      onClick={() => handleCloseDay(today, 'no_spend')}
+                      className="text-[11px] font-semibold text-slate-400 hover:text-white transition"
+                    >
+                      No spend today
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>
