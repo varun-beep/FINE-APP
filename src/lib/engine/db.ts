@@ -1,5 +1,5 @@
 import { db } from '@/db';
-import { expenses, budgets, reviews, schedules, dayClosures, insightLog } from '@/db/schema';
+import { expenses, budgets, reviews, schedules, dayClosures, insightLog, experiments } from '@/db/schema';
 import { analyzeExpenses } from './index';
 import type {
   EngineOutput,
@@ -8,10 +8,11 @@ import type {
   EngineSchedule,
   EngineDayClosure,
   InsightLogEntry,
+  EngineExperiment,
 } from './types';
 import { getKolkataToday } from '../date';
 import { postDueSchedules } from '../schedules';
-import { eq, desc, sql } from 'drizzle-orm';
+import { eq, desc, sql, and } from 'drizzle-orm';
 
 
 /**
@@ -87,8 +88,23 @@ export async function recomputeAndPersistEngine(targetDate?: string): Promise<En
     lastShown: l.lastShown,
     timesShown: l.timesShown,
     dismissed: l.dismissed,
-    feedback: l.feedback as 'not_now' | 'not_useful' | 'planned' | null,
+    feedback: l.feedback as 'not_now' | 'not_useful' | 'already_know' | 'planned' | null,
     lastImpactPaise: l.lastImpactPaise,
+    updatedAt: l.updatedAt,
+  }));
+
+  // 5.6 Fetch experiments
+  const allExperiments = await db.select().from(experiments);
+  const engineExperiments: EngineExperiment[] = allExperiments.map((e) => ({
+    id: e.id,
+    leverId: e.leverId,
+    category: e.category,
+    metric: e.metric,
+    target: e.target,
+    baseline: e.baseline,
+    startDate: e.startDate,
+    endDate: e.endDate,
+    status: e.status,
   }));
 
   // 6. Run pure engine
@@ -98,6 +114,7 @@ export async function recomputeAndPersistEngine(targetDate?: string): Promise<En
     schedules: engineSchedules,
     closedDays: engineClosures,
     insightLogs: engineInsightLogs,
+    experiments: engineExperiments,
   });
 
   // 6.5 Record shown insights in insight_log (only for non-safe_to_spend insights)
@@ -145,6 +162,7 @@ export async function recomputeAndPersistEngine(targetDate?: string): Promise<En
     await db
       .insert(reviews)
       .values({
+        periodType: 'daily',
         reviewDate: dateKey,
         statsJson: output as unknown as Record<string, unknown>,
         adviceJson: adviceSummary as unknown as Record<string, unknown>,
@@ -152,7 +170,7 @@ export async function recomputeAndPersistEngine(targetDate?: string): Promise<En
         createdAt: new Date(),
       })
       .onConflictDoUpdate({
-        target: reviews.reviewDate,
+        target: [reviews.periodType, reviews.reviewDate],
         set: {
           statsJson: output as unknown as Record<string, unknown>,
           adviceJson: adviceSummary as unknown as Record<string, unknown>,
@@ -187,7 +205,7 @@ export async function getLatestEngineOutput(targetDate?: string): Promise<Engine
     const [existing] = await db
       .select()
       .from(reviews)
-      .where(eq(reviews.reviewDate, dateKey))
+      .where(and(eq(reviews.periodType, 'daily'), eq(reviews.reviewDate, dateKey)))
       .limit(1);
 
     if (existing && existing.statsJson) {

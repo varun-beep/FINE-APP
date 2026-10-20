@@ -113,8 +113,21 @@ export interface InsightLogEntry {
   lastShown: Date | string;
   timesShown: number;
   dismissed: boolean;
-  feedback?: 'not_now' | 'not_useful' | 'planned' | null;
+  feedback?: 'not_now' | 'not_useful' | 'already_know' | 'planned' | null;
   lastImpactPaise?: number | null;
+  updatedAt?: Date | string;
+}
+
+export interface EngineExperiment {
+  id: string;
+  leverId: string;
+  category: string;
+  metric: string;
+  target: string;
+  baseline: number;
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  status: 'active' | 'completed' | 'abandoned';
 }
 
 export interface ExperimentProgress {
@@ -132,6 +145,7 @@ export interface EngineOptions {
   schedules?: EngineSchedule[];
   closedDays?: EngineDayClosure[];
   insightLogs?: InsightLogEntry[];
+  experiments?: EngineExperiment[];
   savingsTargetRate?: number; // default 0.20 (20%)
 }
 

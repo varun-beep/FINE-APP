@@ -14,6 +14,7 @@ import { detectSmallLeaks } from './smallleaks';
 import { analyzeCommitmentLoad } from './commitments';
 import { analyzeSavings } from './savings';
 import { calculateMonthEndProjection } from './projection';
+import { generateExperimentProgressInsights } from './experiments';
 import { rankAndFilterInsights } from './ranking';
 
 export * from './types';
@@ -32,6 +33,7 @@ export * from './smallleaks';
 export * from './commitments';
 export * from './savings';
 export * from './projection';
+export * from './experiments';
 export * from './ranking';
 
 /**
@@ -136,6 +138,16 @@ export function analyzeExpenses(
     if (projectionInsight) {
       candidateInsights.push(projectionInsight);
     }
+  }
+
+  // 2.i EXPERIMENT_PROGRESS (closed-loop progress & completed savings)
+  if (options?.experiments && options.experiments.length > 0) {
+    const experimentInsights = generateExperimentProgressInsights(
+      options.experiments,
+      expenses,
+      now
+    );
+    candidateInsights.push(...experimentInsights);
   }
 
   // ==========================================

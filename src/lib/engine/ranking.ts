@@ -9,6 +9,91 @@ export interface RankOptions {
 
 const MINIMUM_SCORE_BAR = 0.04;
 
+export function extractInsightTypeAndCategory(
+  id: string,
+  type: string,
+  evidence?: Record<string, unknown>
+): { type: string; category?: string } {
+  if (evidence && typeof evidence.category === 'string') {
+    return { type, category: evidence.category };
+  }
+  const parts = id.split(':');
+  if (parts.length >= 2 && parts[1]) {
+    return { type: parts[0] || type, category: parts[1] };
+  }
+  return { type };
+}
+
+/**
+ * Checks if an insight is suppressed by user feedback.
+ * "Not useful / Already know / Planned" suppresses that insight type + category for 14 days.
+ * 3 "Not useful" in a row for that type + category suppresses for 60 days.
+ */
+export function isFeedbackSuppressed(
+  insight: Insight,
+  insightLogs: InsightLogEntry[],
+  now: string
+): boolean {
+  const { type, category } = extractInsightTypeAndCategory(
+    insight.id,
+    insight.type,
+    insight.evidence
+  );
+
+  // Filter logs for this (type, category) or exact id with feedback
+  const feedbackLogs = insightLogs.filter((l) => {
+    if (!l.feedback) return false;
+    if (
+      l.feedback !== 'not_useful' &&
+      l.feedback !== 'already_know' &&
+      l.feedback !== 'planned'
+    ) {
+      return false;
+    }
+    if (l.insightKey === insight.id) return true;
+    const logMeta = extractInsightTypeAndCategory(l.insightKey, '');
+    if (
+      category &&
+      logMeta.category === category &&
+      (logMeta.type === type || logMeta.type === insight.type)
+    ) {
+      return true;
+    }
+    return false;
+  });
+
+  if (feedbackLogs.length === 0) return false;
+
+  // Sort descending by timestamp (updatedAt || lastShown || firstShown)
+  feedbackLogs.sort((a, b) => {
+    const timeA = new Date(a.updatedAt || a.lastShown || a.firstShown).getTime();
+    const timeB = new Date(b.updatedAt || b.lastShown || b.firstShown).getTime();
+    return timeB - timeA;
+  });
+
+  const latest = feedbackLogs[0];
+  const rawDate = latest.updatedAt || latest.lastShown || latest.firstShown;
+  const latestDateStr =
+    typeof rawDate === 'string'
+      ? rawDate.slice(0, 10)
+      : rawDate.toISOString().slice(0, 10);
+
+  const daysSince = Math.max(0, daysDifference(now, latestDateStr));
+
+  // Check if 3 "not_useful" in a row
+  let consecutiveNotUseful = 0;
+  for (const l of feedbackLogs) {
+    if (l.feedback === 'not_useful') {
+      consecutiveNotUseful++;
+    } else {
+      break;
+    }
+  }
+
+  const windowDays = consecutiveNotUseful >= 3 ? 60 : 14;
+  return daysSince < windowDays;
+}
+
 /**
  * Section 3: RANKING & MEMORY
  * Score = normalised_impact * confidence * actionable_weight * novelty.
@@ -64,13 +149,14 @@ export function rankAndFilterInsights(
       actionableWeight *= 1.2;
     }
 
-    // 4. Novelty calculation from memory log
+    // 4. Novelty calculation from memory log & feedback learning
     const log = logMap.get(ins.id);
     let novelty = 1.0;
 
-    if (log) {
-      // If user dismissed or clicked "not now" / "not useful" / "planned"
-      if (log.dismissed || log.feedback === 'not_now' || log.feedback === 'not_useful' || log.feedback === 'planned') {
+    if (isFeedbackSuppressed(ins, insightLogs, now)) {
+      novelty = 0.0;
+    } else if (log) {
+      if (log.dismissed || log.feedback === 'not_now') {
         novelty = 0.0; // suppressed
       } else {
         const lastShownStr =
@@ -92,12 +178,11 @@ export function rankAndFilterInsights(
           }
         } else if (daysSinceShown > 3) {
           // Decays smoothly if shown repeatedly in the past
-          novelty = Math.max(0.3, 1.0 - (log.timesShown * 0.15));
+          novelty = Math.max(0.3, 1.0 - log.timesShown * 0.15);
         } else {
           // Same day (daysSinceShown === 0): active for today's session
           novelty = 1.0;
         }
-
       }
     }
 
