@@ -65,6 +65,10 @@ export function ExpenseForm({ onExpenseAdded, onOptimisticAdd, onOptimisticRever
       spentOn,
       merchant: payload.merchant,
       note: payload.note,
+      kind: 'spend',
+      source: 'manual',
+      scheduleId: null,
+      oneOff: false,
       createdAt: new Date(),
     };
 

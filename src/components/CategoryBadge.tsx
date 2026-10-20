@@ -9,6 +9,10 @@ import {
   Film,
   Home,
   Tag,
+  Tv,
+  Coins,
+  TrendingUp,
+  Calendar,
 } from 'lucide-react';
 import type { ExpenseCategory } from '@/lib/validations';
 
@@ -74,6 +78,30 @@ export const CATEGORY_META: Record<
     colorClass: 'text-teal-400',
     bgClass: 'bg-teal-500/10',
     borderClass: 'border-teal-500/20',
+  },
+  Subscriptions: {
+    icon: Tv,
+    colorClass: 'text-purple-400',
+    bgClass: 'bg-purple-500/10',
+    borderClass: 'border-purple-500/20',
+  },
+  Investment: {
+    icon: Coins,
+    colorClass: 'text-amber-400',
+    bgClass: 'bg-amber-500/10',
+    borderClass: 'border-amber-500/20',
+  },
+  Income: {
+    icon: TrendingUp,
+    colorClass: 'text-emerald-400',
+    bgClass: 'bg-emerald-500/10',
+    borderClass: 'border-emerald-500/20',
+  },
+  EMI: {
+    icon: Calendar,
+    colorClass: 'text-rose-400',
+    bgClass: 'bg-rose-500/10',
+    borderClass: 'border-rose-500/20',
   },
   Other: {
     icon: Tag,

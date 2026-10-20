@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import NextLink from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LogOut, History, Sparkles } from 'lucide-react';
+import { LogOut, History, Sparkles, Repeat, Settings, Home } from 'lucide-react';
 
 export function Navbar() {
   const pathname = usePathname();
@@ -23,41 +23,64 @@ export function Navbar() {
   };
 
   return (
-    <header className="sticky top-0 z-30 glass-panel border-b border-slate-800/80 px-4 py-3">
-      <div className="flex items-center justify-between">
+    <header className="sticky top-0 z-30 glass-panel border-b border-slate-800/80 px-3 py-2.5">
+      <div className="flex items-center justify-between gap-1">
         {/* Brand */}
-        <NextLink href="/" className="flex items-center gap-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 p-0.5 shadow-md shadow-emerald-500/20">
-            <span className="text-base font-black text-slate-950">₹</span>
+        <NextLink href="/" className="flex items-center gap-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 p-0.5 shadow-md shadow-emerald-500/20">
+            <span className="text-sm font-black text-slate-950">₹</span>
           </div>
-          <div>
-            <span className="text-base font-bold tracking-tight text-white">SpendCoach</span>
-            <span className="block text-[10px] font-medium uppercase tracking-wider text-emerald-400">
-              Personal PWA
-            </span>
-          </div>
+          <span className="text-sm font-bold tracking-tight text-white hidden sm:inline">SpendCoach</span>
         </NextLink>
 
-        {/* Actions */}
-        <div className="flex items-center gap-1.5">
+        {/* Navigation Tabs */}
+        <div className="flex items-center gap-1 overflow-x-auto scrollbar-none">
           <NextLink
-            href="/review"
-            className={`flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-xl px-2.5 text-xs font-semibold transition active:scale-95 ${
-              pathname === '/review'
+            href="/"
+            title="Tonight's Entry"
+            className={`flex min-h-[40px] items-center justify-center gap-1 rounded-xl px-2.5 text-xs font-semibold transition active:scale-95 ${
+              pathname === '/'
                 ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/30'
-                : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700'
+                : 'bg-slate-800/60 text-slate-300 hover:bg-slate-700'
             }`}
           >
-            <Sparkles className="h-4 w-4 text-emerald-400" />
+            <Home className="h-3.5 w-3.5 text-emerald-400" />
+            <span className="hidden xs:inline">Entry</span>
+          </NextLink>
+
+          <NextLink
+            href="/commitments"
+            title="Commitments"
+            className={`flex min-h-[40px] items-center justify-center gap-1 rounded-xl px-2.5 text-xs font-semibold transition active:scale-95 ${
+              pathname === '/commitments'
+                ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/30'
+                : 'bg-slate-800/60 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            <Repeat className="h-3.5 w-3.5 text-purple-400" />
+            <span>Commitments</span>
+          </NextLink>
+
+          <NextLink
+            href="/review"
+            title="Review"
+            className={`flex min-h-[40px] items-center justify-center gap-1 rounded-xl px-2.5 text-xs font-semibold transition active:scale-95 ${
+              pathname === '/review'
+                ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/30'
+                : 'bg-slate-800/60 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            <Sparkles className="h-3.5 w-3.5 text-amber-400" />
             <span>Review</span>
           </NextLink>
 
           <NextLink
             href="/insights"
-            className={`flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-xl px-2.5 text-xs font-semibold transition active:scale-95 ${
+            title="Insights"
+            className={`flex min-h-[40px] items-center justify-center gap-1 rounded-xl px-2.5 text-xs font-semibold transition active:scale-95 ${
               pathname === '/insights'
                 ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/30'
-                : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700'
+                : 'bg-slate-800/60 text-slate-300 hover:bg-slate-700'
             }`}
           >
             <span>Insights</span>
@@ -65,14 +88,26 @@ export function Navbar() {
 
           <NextLink
             href="/history"
-            className={`flex min-h-[44px] min-w-[44px] items-center justify-center gap-1 rounded-xl px-2.5 text-xs font-semibold transition active:scale-95 ${
+            title="History"
+            className={`flex min-h-[40px] items-center justify-center gap-1 rounded-xl px-2.5 text-xs font-semibold transition active:scale-95 ${
               pathname === '/history'
                 ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/30'
-                : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700'
+                : 'bg-slate-800/60 text-slate-300 hover:bg-slate-700'
             }`}
           >
-            <History className="h-4 w-4 text-emerald-400" />
-            <span>History</span>
+            <History className="h-3.5 w-3.5" />
+          </NextLink>
+
+          <NextLink
+            href="/settings"
+            title="Settings & Export"
+            className={`flex min-h-[40px] items-center justify-center gap-1 rounded-xl px-2 text-xs font-semibold transition active:scale-95 ${
+              pathname === '/settings'
+                ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/30'
+                : 'bg-slate-800/60 text-slate-300 hover:bg-slate-700'
+            }`}
+          >
+            <Settings className="h-3.5 w-3.5" />
           </NextLink>
 
           <button
@@ -80,9 +115,9 @@ export function Navbar() {
             disabled={loggingOut}
             title="Log out"
             aria-label="Log out"
-            className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl bg-slate-800/40 text-slate-400 transition hover:bg-red-950/40 hover:text-red-400 active:scale-95"
+            className="flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl bg-slate-800/40 text-slate-400 transition hover:bg-red-950/40 hover:text-red-400 active:scale-95"
           >
-            <LogOut className="h-4 w-4" />
+            <LogOut className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>

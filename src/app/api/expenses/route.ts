@@ -4,9 +4,13 @@ import { expenses } from '@/db/schema';
 import { createExpenseSchema, expenseQuerySchema } from '@/lib/validations';
 import { and, gte, lte, eq, desc } from 'drizzle-orm';
 import { triggerAsyncRecompute } from '@/lib/engine/db';
+import { guardedPostDueSchedules } from '@/lib/schedules';
 
 export async function GET(req: NextRequest) {
   try {
+    // Guarded schedule posting on authenticated reads
+    await guardedPostDueSchedules();
+
     const url = new URL(req.url);
     const queryParams = {
       month: url.searchParams.get('month') || undefined,
@@ -103,6 +107,10 @@ export async function POST(req: NextRequest) {
         note: data.note ?? null,
         merchant: data.merchant ?? null,
         spentOn: data.spent_on,
+        kind: data.kind,
+        source: data.source,
+        scheduleId: data.schedule_id ?? null,
+        oneOff: data.one_off,
       })
       .returning();
 

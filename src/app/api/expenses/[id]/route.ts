@@ -62,6 +62,18 @@ export async function PATCH(req: NextRequest, context: RouteContext) {
     if (data.merchant !== undefined) {
       updateValues.merchant = data.merchant;
     }
+    if (data.kind !== undefined) {
+      updateValues.kind = data.kind;
+    }
+    if (data.source !== undefined) {
+      updateValues.source = data.source;
+    }
+    if (data.schedule_id !== undefined) {
+      updateValues.scheduleId = data.schedule_id;
+    }
+    if (data.one_off !== undefined) {
+      updateValues.oneOff = data.one_off;
+    }
 
     const [updated] = await db
       .update(expenses)

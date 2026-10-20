@@ -39,6 +39,8 @@ export function formatPaise(paise: number): string {
   return isNegative ? `-${result}` : result;
 }
 
+export const formatPaiseToRupees = formatPaise;
+
 /**
  * Parses a rupee amount (number or string representation like "199.99", "₹1,23,456.50", "50")
  * into integer paise without floating point rounding errors.
@@ -88,6 +90,44 @@ export function parseRupeesToPaise(input: string | number): number {
 
   const totalPaise = whole * 100 + paiseFromFraction;
   return isNegative ? -totalPaise : totalPaise;
+}
+
+/**
+ * Parses shorthand amounts like "250", "2.5k", "1.2L", "1.5cr", "₹4,850".
+ * Returns integer paise, or null if invalid.
+ */
+export function parseAmountShorthand(input: string): number | null {
+  if (!input || typeof input !== 'string') return null;
+  const clean = input.replace(/[₹,\s]/g, '').trim().toLowerCase();
+  if (!clean) return null;
+
+  // Lakh shorthand: 1.2L, 1.2lakh, 1.2lakhs
+  const lakhMatch = clean.match(/^([\d.]+)\s*(?:l|lakh|lakhs)$/);
+  if (lakhMatch) {
+    const val = parseFloat(lakhMatch[1]);
+    return isNaN(val) || val <= 0 ? null : Math.round(val * 100000 * 100);
+  }
+
+  // Thousand shorthand: 2.5k, 25k
+  const kMatch = clean.match(/^([\d.]+)\s*k$/);
+  if (kMatch) {
+    const val = parseFloat(kMatch[1]);
+    return isNaN(val) || val <= 0 ? null : Math.round(val * 1000 * 100);
+  }
+
+  // Crore shorthand: 1.5cr
+  const crMatch = clean.match(/^([\d.]+)\s*(?:cr|crore|crores)$/);
+  if (crMatch) {
+    const val = parseFloat(crMatch[1]);
+    return isNaN(val) || val <= 0 ? null : Math.round(val * 10000000 * 100);
+  }
+
+  try {
+    const paise = parseRupeesToPaise(clean);
+    return paise > 0 ? paise : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateDailyReview } from '@/lib/llm/service';
 import { getKolkataToday } from '@/lib/date';
+import { postDueSchedules } from '@/lib/schedules';
 
 export const maxDuration = 30;
 
@@ -17,6 +18,8 @@ export async function GET(req: NextRequest) {
 
   try {
     const today = getKolkataToday();
+    // Post due schedules for today before generating review
+    await postDueSchedules(today);
     const result = await generateDailyReview(today, { regenerate: true });
 
     return NextResponse.json({
