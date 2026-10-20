@@ -8,6 +8,13 @@
       "when": 1792505445289,
       "tag": "0000_glossy_marvel_apes",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792510304417,
+      "tag": "0001_fearless_golden_guardian",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,4 @@
-import { pgTable, uuid, integer, text, date, timestamp, jsonb, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, integer, text, date, timestamp, jsonb, boolean, index } from 'drizzle-orm/pg-core';
 
 export const expenses = pgTable(
   'expenses',
@@ -30,9 +30,26 @@ export const reviews = pgTable('reviews', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+export const loginAttempts = pgTable(
+  'login_attempts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    ipHash: text('ip_hash').notNull(),
+    attemptedAt: timestamp('attempted_at', { withTimezone: true }).defaultNow().notNull(),
+    succeeded: boolean('succeeded').notNull(),
+  },
+  (table) => [
+    index('login_attempts_ip_hash_idx').on(table.ipHash, table.attemptedAt),
+    index('login_attempts_attempted_at_idx').on(table.attemptedAt),
+  ]
+);
+
 export type Expense = typeof expenses.$inferSelect;
 export type NewExpense = typeof expenses.$inferInsert;
 export type Budget = typeof budgets.$inferSelect;
 export type NewBudget = typeof budgets.$inferInsert;
 export type Review = typeof reviews.$inferSelect;
 export type NewReview = typeof reviews.$inferInsert;
+export type LoginAttempt = typeof loginAttempts.$inferSelect;
+export type NewLoginAttempt = typeof loginAttempts.$inferInsert;
+

@@ -23,12 +23,12 @@ function getClientIp(req: NextRequest): string {
 export async function POST(req: NextRequest) {
   const ip = getClientIp(req);
 
-  // 1. Check brute-force rate limit (5 failed attempts per 10 minutes)
-  const rateLimitStatus = checkRateLimit(ip);
+  // 1. Check brute-force rate limit (5 failed attempts per 10 minutes, global 20/hr)
+  const rateLimitStatus = await checkRateLimit(ip);
   if (!rateLimitStatus.allowed) {
     return NextResponse.json(
       {
-        error: 'Too many failed login attempts',
+        error: rateLimitStatus.reason || 'Too many failed login attempts',
         message: `Too many failed attempts. Try again in ${rateLimitStatus.retryAfterSeconds} seconds.`,
       },
       {
@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
   const isValid = verifyPasscode(passcode, env.APP_PASSCODE);
 
   if (!isValid) {
-    recordFailedAttempt(ip);
+    await recordFailedAttempt(ip);
     return NextResponse.json(
       { error: 'Invalid passcode' },
       { status: 401 }
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Clear failed attempts counter on success
-  clearRateLimit(ip);
+  await clearRateLimit(ip);
 
   // 4. Generate signed JWT session
   const token = await signSessionJwt();
