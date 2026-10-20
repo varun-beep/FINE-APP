@@ -3,7 +3,7 @@ dotenv.config({ path: '.env.local' });
 dotenv.config();
 
 import { db } from '../src/db';
-import { expenses, reviews } from '../src/db/schema';
+import { expenses, schedules, insightLog } from '../src/db/schema';
 import { recomputeAndPersistEngine } from '../src/lib/engine/db';
 import { sql } from 'drizzle-orm';
 
@@ -19,12 +19,21 @@ async function seedClear() {
 
   console.log('Clearing all demo seeded data...');
 
-  const result = await db
+  const deletedExpenses = await db
     .delete(expenses)
-    .where(sql`note LIKE '%[SEED_DEMO]%'`)
+    .where(sql`note LIKE '%[SEED_DEMO]%' OR merchant LIKE '%[SEED_DEMO]%'`)
     .returning();
 
-  console.log(`✓ Deleted ${result.length} seeded demo expenses.`);
+  const deletedSchedules = await db
+    .delete(schedules)
+    .where(sql`name LIKE '%[SEED_DEMO]%'`)
+    .returning();
+
+  await db.delete(insightLog);
+
+
+  console.log(`✓ Deleted ${deletedExpenses.length} seeded demo expenses.`);
+  console.log(`✓ Deleted ${deletedSchedules.length} seeded demo schedules.`);
 
   // Clear or recompute engine
   const output = await recomputeAndPersistEngine();
