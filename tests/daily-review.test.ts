@@ -211,11 +211,11 @@ describe('SpendCoach AI Daily Review', () => {
       expect(res.valid).toBe(true);
     });
 
-    it('rejects advice with invented ungrounded numbers (e.g. ₹75,000 or 15% interest)', () => {
+    it('rejects advice with invented ungrounded numbers (e.g. ₹75,000 or 17% interest)', () => {
       const inventedAdvice: DailyReviewAdvice = {
         headline: 'You should invest ₹75,000 into a mutual fund',
         went_well: ['Kept tracking everyday'],
-        watch_out: ['High interest of 15% on cards'],
+        watch_out: ['High interest of 17% on cards'],
         action_tomorrow: 'Pay down your credit card',
         saving_ideas: ['Put ₹8,200 into high yield savings'],
         earning_ideas: [],
@@ -225,8 +225,25 @@ describe('SpendCoach AI Daily Review', () => {
       const res = validateNumberGuardrail(inventedAdvice, allowed);
       expect(res.valid).toBe(false);
       expect(res.unsupportedNumbers).toContain(75000);
-      expect(res.unsupportedNumbers).toContain(15);
+      expect(res.unsupportedNumbers).toContain(17);
       expect(res.unsupportedNumbers).toContain(8200);
+    });
+
+    it('accepts legitimate derivations such as thousands (k), lakhs (L), and percent rounding', () => {
+      // In allowed list: 4850, 79900, 19.4, 46
+      const allowedWithLarge = [4850, 79900, 250, 19.4, 46, 649];
+      const derivedAdvice: DailyReviewAdvice = {
+        headline: 'iPad Pro purchase of ₹79.9k (around 0.8 lakh) flagged as spike',
+        went_well: ['Routine ₹0.6k streaming charge on track'],
+        watch_out: ['Dinner was around 4.9k (19x usual)'],
+        action_tomorrow: 'Keep spend low tomorrow',
+        saving_ideas: ['Save by cooking meals at home'],
+        earning_ideas: [],
+        mood: 'careful',
+      };
+
+      const res = validateNumberGuardrail(derivedAdvice, allowedWithLarge);
+      expect(res.valid).toBe(true);
     });
 
     it('extracts numbers accurately from Indian formatted strings (e.g. ₹1,23,456.50)', () => {
@@ -376,6 +393,7 @@ describe('SpendCoach AI Daily Review', () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
       // Still invalid after retry -> fallback used
       expect(result.source).toBe('fallback');
+      expect(result.fallbackReason).toBe('guardrail_rejected');
       expect(result.advice).toBeDefined();
     });
 
@@ -389,6 +407,7 @@ describe('SpendCoach AI Daily Review', () => {
       const result = await generateDailyReview('2026-10-20', { regenerate: true });
 
       expect(result.source).toBe('fallback');
+      expect(result.fallbackReason).toBe('rate_limited');
       expect(result.advice.headline).toBeDefined();
     });
 
@@ -398,6 +417,7 @@ describe('SpendCoach AI Daily Review', () => {
       const result = await generateDailyReview('2026-10-20', { regenerate: true });
 
       expect(result.source).toBe('fallback');
+      expect(result.fallbackReason).toBe('timeout');
       expect(result.advice.headline).toBeDefined();
     });
 

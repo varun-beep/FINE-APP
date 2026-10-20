@@ -12,6 +12,15 @@ export const dailyReviewAdviceSchema = z.object({
 
 export type DailyReviewAdvice = z.infer<typeof dailyReviewAdviceSchema>;
 
+export type FallbackReason =
+  | 'no_key'
+  | 'http_error'
+  | 'timeout'
+  | 'rate_limited'
+  | 'invalid_json'
+  | 'schema_invalid'
+  | 'guardrail_rejected';
+
 export interface LearningProgress {
   expenseCount: number;
   expenseThreshold: number;
@@ -30,6 +39,9 @@ export interface DailyReviewResult {
   canRegenerate: boolean;
   learningProgress?: LearningProgress;
   disclaimer: string;
+  fallbackReason?: FallbackReason;
+  rawModelOutput?: string;
+  guardrailRejectedNumbers?: number[];
 }
 
 export interface StoredAdviceJson extends DailyReviewAdvice {
@@ -38,6 +50,9 @@ export interface StoredAdviceJson extends DailyReviewAdvice {
     lastGeneratedAt: string;
     isLearning?: boolean;
     learningProgress?: LearningProgress;
+    fallbackReason?: FallbackReason;
+    rawModelOutput?: string;
+    guardrailRejectedNumbers?: number[];
   };
 }
 

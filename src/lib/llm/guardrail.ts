@@ -73,6 +73,29 @@ function isNumberAllowed(num: number, allowedSet: Set<number>, allowedList: numb
         return true;
       }
     }
+
+    // Thousands derivation (e.g. ₹79.9k or 80k for 79,900; 4.85k or 5k for 4,850; 0.6k for 649)
+    if (allowed >= 500) {
+      const inThousands = allowed / 1000;
+      if (
+        Math.abs(num - inThousands) <= 0.2 ||
+        Math.round(num) === Math.round(inThousands) ||
+        Math.abs(num - Math.round(inThousands)) <= 1
+      ) {
+        return true;
+      }
+    }
+
+    // Lakhs derivation (e.g. ₹0.8L or 0.79L for 79,900)
+    if (allowed >= 10000) {
+      const inLakhs = allowed / 100000;
+      if (
+        Math.abs(num - inLakhs) <= 0.05 ||
+        Number(num.toFixed(1)) === Number(inLakhs.toFixed(1))
+      ) {
+        return true;
+      }
+    }
   }
 
   return false;

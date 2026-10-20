@@ -78,6 +78,16 @@ export function buildDailyReviewSummaryPayload(
     };
   });
 
+  // Track pairwise sums of active categories
+  const activeCategoryAmounts = categories
+    .map((c) => c.spentSoFarRupees)
+    .filter((a) => a > 0);
+  for (let i = 0; i < activeCategoryAmounts.length; i++) {
+    for (let j = i + 1; j < activeCategoryAmounts.length; j++) {
+      trackNumber(activeCategoryAmounts[i] + activeCategoryAmounts[j]);
+    }
+  }
+
   // 3. Flagged Anomalies (Ratios & Categories ONLY, no notes or timestamps)
   const flaggedAnomalies = output.transactionAnomalies.map((a) => {
     const amountRupees = Math.round(a.amountPaise / 100);

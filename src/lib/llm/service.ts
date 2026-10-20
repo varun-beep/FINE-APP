@@ -9,6 +9,7 @@ import {
   type DailyReviewAdvice,
   type DailyReviewResult,
   type StoredAdviceJson,
+  type FallbackReason,
 } from './types';
 import { buildDailyReviewSummaryPayload } from './privacy';
 import { validateNumberGuardrail } from './guardrail';
@@ -43,6 +44,15 @@ export interface GenerateReviewOptions {
   forceSource?: 'llm' | 'fallback';
 }
 
+class LlmHttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'LlmHttpError';
+    this.status = status;
+  }
+}
+
 /**
  * Calls the Groq OpenAI-compatible chat completion endpoint.
  */
@@ -72,7 +82,10 @@ async function callGroqChat(
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => '');
-    throw new Error(`LLM API returned status ${response.status}: ${errorText}`);
+    throw new LlmHttpError(
+      response.status,
+      `LLM API returned status ${response.status}: ${errorText}`
+    );
   }
 
   const data = await response.json();
@@ -90,12 +103,23 @@ async function callGroqChat(
 function parseAndValidateLlmOutput(
   rawContent: string,
   allowedNumbers: number[]
-): { success: true; advice: DailyReviewAdvice } | { success: false; error: string } {
+):
+  | { success: true; advice: DailyReviewAdvice }
+  | {
+      success: false;
+      error: string;
+      reason: 'invalid_json' | 'schema_invalid' | 'guardrail_rejected';
+      rejectedNumbers?: number[];
+    } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawContent);
   } catch (err) {
-    return { success: false, error: `Malformed JSON: ${(err as Error).message}` };
+    return {
+      success: false,
+      error: `Malformed JSON: ${(err as Error).message}`,
+      reason: 'invalid_json',
+    };
   }
 
   const schemaResult = dailyReviewAdviceSchema.safeParse(parsed);
@@ -103,6 +127,7 @@ function parseAndValidateLlmOutput(
     return {
       success: false,
       error: `Schema validation failed: ${schemaResult.error.issues.map((i) => i.message).join('; ')}`,
+      reason: 'schema_invalid',
     };
   }
 
@@ -111,6 +136,8 @@ function parseAndValidateLlmOutput(
     return {
       success: false,
       error: guardrailResult.reason || 'Guardrail validation rejected unsupported numbers',
+      reason: 'guardrail_rejected',
+      rejectedNumbers: guardrailResult.unsupportedNumbers,
     };
   }
 
@@ -131,7 +158,6 @@ export async function generateDailyReview(
   const engineOutput = await getLatestEngineOutput(dateKey);
 
   // 2. LEARNING STATE CHECK
-  // If status is "learning", return friendly learning-mode result WITHOUT calling LLM.
   if (engineOutput.learning.status === 'learning') {
     const learningAdvice = generateLearningAdvice(engineOutput);
     const learningResult: DailyReviewResult = {
@@ -150,17 +176,26 @@ export async function generateDailyReview(
         daysNeeded: engineOutput.learning.daysNeeded,
       },
       disclaimer: FINANCIAL_DISCLAIMER,
+      fallbackReason: 'no_key', // Learning state does not call LLM
     };
 
-    // Save learning advice to reviews table
-    await persistReviewAdvice(dateKey, engineOutput, learningAdvice, 'fallback', 0, true, {
-      expenseCount: engineOutput.learning.expenseCount,
-      expenseThreshold: engineOutput.learning.expenseThreshold,
-      distinctDaysCount: engineOutput.learning.distinctDaysCount,
-      distinctDaysThreshold: engineOutput.learning.distinctDaysThreshold,
-      expensesNeeded: engineOutput.learning.expensesNeeded,
-      daysNeeded: engineOutput.learning.daysNeeded,
-    });
+    await persistReviewAdvice(
+      dateKey,
+      engineOutput,
+      learningAdvice,
+      'fallback',
+      0,
+      true,
+      {
+        expenseCount: engineOutput.learning.expenseCount,
+        expenseThreshold: engineOutput.learning.expenseThreshold,
+        distinctDaysCount: engineOutput.learning.distinctDaysCount,
+        distinctDaysThreshold: engineOutput.learning.distinctDaysThreshold,
+        expensesNeeded: engineOutput.learning.expensesNeeded,
+        daysNeeded: engineOutput.learning.daysNeeded,
+      },
+      'no_key'
+    );
 
     return learningResult;
   }
@@ -177,7 +212,6 @@ export async function generateDailyReview(
     const stored = existingReview.adviceJson as StoredAdviceJson;
     currentRegenCount = stored._meta?.regenerationCount ?? 0;
 
-    // Return cached review unless explicitly asked to regenerate
     if (!regenerate && !stored._meta?.isLearning) {
       const parsedStored = dailyReviewAdviceSchema.safeParse(stored);
       if (parsedStored.success) {
@@ -189,14 +223,15 @@ export async function generateDailyReview(
           regenerationCount: currentRegenCount,
           canRegenerate: currentRegenCount < 5,
           disclaimer: FINANCIAL_DISCLAIMER,
+          fallbackReason: stored._meta?.fallbackReason,
+          rawModelOutput: stored._meta?.rawModelOutput,
+          guardrailRejectedNumbers: stored._meta?.guardrailRejectedNumbers,
         };
       }
     }
   }
 
-  // Check regeneration limit (max 5 per day)
   if (regenerate && currentRegenCount >= 5) {
-    // If limit exceeded, return existing cached advice with canRegenerate = false
     if (existingReview?.adviceJson) {
       const stored = existingReview.adviceJson as StoredAdviceJson;
       const parsedStored = dailyReviewAdviceSchema.safeParse(stored);
@@ -209,6 +244,9 @@ export async function generateDailyReview(
           regenerationCount: currentRegenCount,
           canRegenerate: false,
           disclaimer: FINANCIAL_DISCLAIMER,
+          fallbackReason: stored._meta?.fallbackReason,
+          rawModelOutput: stored._meta?.rawModelOutput,
+          guardrailRejectedNumbers: stored._meta?.guardrailRejectedNumbers,
         };
       }
     }
@@ -226,9 +264,13 @@ export async function generateDailyReview(
 
   let finalAdvice: DailyReviewAdvice | null = null;
   let finalSource: 'llm' | 'fallback' = 'fallback';
+  let fallbackReason: FallbackReason | undefined;
+  let rawModelOutput: string | undefined;
+  let guardrailRejectedNumbers: number[] | undefined;
 
   if (!apiKey || options?.forceSource === 'fallback') {
-    // No API key configured or fallback forced
+    fallbackReason = 'no_key';
+    console.warn('[LLM Fallback]: Reason: no_key (GROQ_API_KEY missing or fallback forced)');
     finalAdvice = generateFallbackAdvice(engineOutput);
     finalSource = 'fallback';
   } else {
@@ -240,17 +282,21 @@ export async function generateDailyReview(
       ];
 
       // First LLM call
-      const firstRaw = await callGroqChat(messages, apiKey, baseUrl, model);
-      const firstCheck = parseAndValidateLlmOutput(firstRaw, allowedNumbers);
+      rawModelOutput = await callGroqChat(messages, apiKey, baseUrl, model);
+      const firstCheck = parseAndValidateLlmOutput(rawModelOutput, allowedNumbers);
 
       if (firstCheck.success) {
         finalAdvice = firstCheck.advice;
         finalSource = 'llm';
       } else {
-        // Retry ONCE with repair instruction
+        // Record intermediate reason and retry once
+        if (firstCheck.reason === 'guardrail_rejected') {
+          guardrailRejectedNumbers = firstCheck.rejectedNumbers;
+        }
+
         const repairMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
           ...messages,
-          { role: 'assistant', content: firstRaw },
+          { role: 'assistant', content: rawModelOutput },
           {
             role: 'user',
             content: `Your previous response was rejected due to: ${firstCheck.error}.
@@ -259,26 +305,47 @@ Please strictly fix this now. You must ONLY use numbers present in the input, pr
         ];
 
         const retryRaw = await callGroqChat(repairMessages, apiKey, baseUrl, model);
+        rawModelOutput = retryRaw;
         const retryCheck = parseAndValidateLlmOutput(retryRaw, allowedNumbers);
 
         if (retryCheck.success) {
           finalAdvice = retryCheck.advice;
           finalSource = 'llm';
+          guardrailRejectedNumbers = undefined;
         } else {
-          // Guardrail/repair failure leads to deterministic fallback
+          fallbackReason = retryCheck.reason;
+          if (retryCheck.reason === 'guardrail_rejected') {
+            guardrailRejectedNumbers = retryCheck.rejectedNumbers;
+          }
+          console.warn(`[LLM Fallback]: Reason: ${fallbackReason} (${retryCheck.error})`);
           finalAdvice = generateFallbackAdvice(engineOutput);
           finalSource = 'fallback';
         }
       }
-    } catch (err) {
-      // 429, timeout, network error, or invalid key leads to deterministic fallback
-      console.warn('[LLM Error]: Falling back to deterministic advice template:', err);
+    } catch (err: unknown) {
+      const errorObj = err as { name?: string; message?: string; status?: number } | undefined;
+      if (err instanceof LlmHttpError) {
+        fallbackReason = err.status === 429 ? 'rate_limited' : 'http_error';
+      } else if (
+        errorObj?.name === 'TimeoutError' ||
+        errorObj?.name === 'AbortError' ||
+        String(errorObj?.message || '').toLowerCase().includes('timed out')
+      ) {
+        fallbackReason = 'timeout';
+      } else if (String(errorObj?.message || '').includes('429')) {
+        fallbackReason = 'rate_limited';
+      } else {
+        fallbackReason = 'http_error';
+      }
+
+      console.warn(`[LLM Fallback]: Reason: ${fallbackReason} - ${errorObj?.message || 'Error occurred'}`);
       finalAdvice = generateFallbackAdvice(engineOutput);
       finalSource = 'fallback';
     }
   }
 
   if (!finalAdvice) {
+    fallbackReason = fallbackReason || 'http_error';
     finalAdvice = generateFallbackAdvice(engineOutput);
     finalSource = 'fallback';
   }
@@ -290,7 +357,11 @@ Please strictly fix this now. You must ONLY use numbers present in the input, pr
     finalAdvice,
     finalSource,
     nextRegenCount,
-    false
+    false,
+    undefined,
+    fallbackReason,
+    rawModelOutput,
+    guardrailRejectedNumbers
   );
 
   return {
@@ -301,6 +372,9 @@ Please strictly fix this now. You must ONLY use numbers present in the input, pr
     regenerationCount: nextRegenCount,
     canRegenerate: nextRegenCount < 5,
     disclaimer: FINANCIAL_DISCLAIMER,
+    fallbackReason,
+    rawModelOutput,
+    guardrailRejectedNumbers,
   };
 }
 
@@ -314,7 +388,10 @@ async function persistReviewAdvice(
   source: 'llm' | 'fallback',
   regenerationCount: number,
   isLearning: boolean,
-  learningProgress?: DailyReviewResult['learningProgress']
+  learningProgress?: DailyReviewResult['learningProgress'],
+  fallbackReason?: FallbackReason,
+  rawModelOutput?: string,
+  guardrailRejectedNumbers?: number[]
 ): Promise<void> {
   const adviceToStore: StoredAdviceJson = {
     ...advice,
@@ -323,6 +400,9 @@ async function persistReviewAdvice(
       lastGeneratedAt: new Date().toISOString(),
       isLearning,
       learningProgress,
+      fallbackReason,
+      rawModelOutput,
+      guardrailRejectedNumbers,
     },
   };
 
