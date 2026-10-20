@@ -28,7 +28,7 @@ export function evaluateLearningState(
   const expenseCount = discretionaryExpenses.length;
 
   let distinctDaysCount: number;
-  if (closedDays !== undefined && closedDays !== null) {
+  if (closedDays && closedDays.length > 0) {
     // Only count days closed with 'logged' or 'no_spend'; 'skipped' days are excluded!
     const validClosedDays = closedDays.filter(
       (d) => d.status === 'logged' || d.status === 'no_spend'
@@ -38,6 +38,7 @@ export function evaluateLearningState(
     // Fallback when closures are not supplied
     distinctDaysCount = new Set(discretionaryExpenses.map((e) => e.spentOn)).size;
   }
+
 
   const isOverallReady =
     expenseCount >= OVERALL_EXPENSE_THRESHOLD &&

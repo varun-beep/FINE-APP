@@ -115,6 +115,25 @@ export const loginAttempts = pgTable(
   ]
 );
 
+export const insightLog = pgTable(
+  'insight_log',
+  {
+    insightKey: text('insight_key').primaryKey(),
+    firstShown: timestamp('first_shown', { withTimezone: true }).defaultNow().notNull(),
+    lastShown: timestamp('last_shown', { withTimezone: true }).defaultNow().notNull(),
+    timesShown: integer('times_shown').default(1).notNull(),
+    dismissed: boolean('dismissed').default(false).notNull(),
+    feedback: text('feedback'),
+    lastImpactPaise: integer('last_impact_paise'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('insight_log_last_shown_idx').on(table.lastShown),
+    index('insight_log_dismissed_idx').on(table.dismissed),
+  ]
+);
+
 export type Schedule = typeof schedules.$inferSelect;
 export type NewSchedule = typeof schedules.$inferInsert;
 export type SchedulePriceHistory = typeof schedulePriceHistory.$inferSelect;
@@ -129,3 +148,6 @@ export type Review = typeof reviews.$inferSelect;
 export type NewReview = typeof reviews.$inferInsert;
 export type LoginAttempt = typeof loginAttempts.$inferSelect;
 export type NewLoginAttempt = typeof loginAttempts.$inferInsert;
+export type InsightLog = typeof insightLog.$inferSelect;
+export type NewInsightLog = typeof insightLog.$inferInsert;
+

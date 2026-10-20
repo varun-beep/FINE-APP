@@ -41,11 +41,98 @@ export interface EngineDayClosure {
   closedAt?: Date | string;
 }
 
+export interface InsightLever {
+  id: string;
+  description: string;
+  monthlySavingPaise: number;
+}
+
+export type InsightType =
+  | 'safe_to_spend'
+  | 'outlier'
+  | 'drift'
+  | 'behaviour'
+  | 'small_leaks'
+  | 'commitment_load'
+  | 'savings'
+  | 'projection'
+  | 'experiment_progress';
+
+export interface Insight {
+  id: string; // stable, e.g. "drift:Food:2026-W42"
+  type: InsightType;
+  title: string;
+  evidence: Record<string, number | string | boolean | null | undefined>;
+  impactPaise: number; // estimated ₹ effect this month or per month
+  confidence: number; // 0-1 from sample size and signal strength
+  actionable: boolean;
+  levers: InsightLever[];
+  firstSeen: string; // YYYY-MM-DD
+  severity: 'info' | 'warning' | 'alert';
+  expenseId?: string; // for outliers (to allow one-off tagging)
+  score?: number; // computed ranking score
+}
+
+export interface SilentFlag {
+  id: string;
+  type: string;
+  title: string;
+  reason: string;
+  evidence: Record<string, number | string | boolean | null | undefined>;
+}
+
+
+export type AllowanceVerdict = 'under' | 'at' | 'over';
+
+export interface SafeToSpendAllowance {
+  dailyAllowancePaise: number;
+  weekdayAwareAllowancePaise: number;
+  todaySpentPaise: number;
+  verdict: AllowanceVerdict;
+  tomorrowDailyAllowancePaise: number;
+  tomorrowWeekdayAllowancePaise: number;
+  monthlyIncomePaise: number;
+  committedDuePaise: number;
+  savingsTargetPaise: number;
+  discretionarySpentSoFarPaise: number;
+  remainingDiscretionaryPaise: number;
+  daysLeftInMonth: number;
+}
+
+export interface CoverageReport {
+  daysClosed: number;
+  weeksOfHistory: number;
+  categoriesReady: string[];
+  categoriesLearning: string[];
+  reasons: string[];
+}
+
+export interface InsightLogEntry {
+  insightKey: string;
+  firstShown: Date | string;
+  lastShown: Date | string;
+  timesShown: number;
+  dismissed: boolean;
+  feedback?: 'not_now' | 'not_useful' | 'planned' | null;
+  lastImpactPaise?: number | null;
+}
+
+export interface ExperimentProgress {
+  id: string;
+  name: string;
+  startDate: string;
+  targetSavingPaise: number;
+  currentSavingPaise: number;
+  status: 'in_progress' | 'achieved' | 'failed';
+}
+
 export interface EngineOptions {
   now?: string; // Reference date in YYYY-MM-DD (defaults to Asia/Kolkata today)
   budgets?: EngineBudget[];
   schedules?: EngineSchedule[];
   closedDays?: EngineDayClosure[];
+  insightLogs?: InsightLogEntry[];
+  savingsTargetRate?: number; // default 0.20 (20%)
 }
 
 export type LearningStatus = 'learning' | 'ready';
@@ -154,6 +241,11 @@ export interface OverallTrends {
 
 export interface EngineOutput {
   evaluatedAt: string; // YYYY-MM-DD
+  coverage?: CoverageReport;
+  allowance?: SafeToSpendAllowance | null;
+  insights?: Insight[];
+  silentFlags?: SilentFlag[];
+  allRankedInsights?: Insight[];
   learning: OverallLearningState;
   transactionAnomalies: TransactionAnomaly[];
   dailyAnomalies: DailyTotalAnomaly[];
@@ -161,3 +253,5 @@ export interface EngineOutput {
   budgetRunRate: OverallBudgetRunRate;
   trends: OverallTrends;
 }
+
+

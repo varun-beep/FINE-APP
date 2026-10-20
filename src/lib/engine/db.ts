@@ -1,5 +1,5 @@
 import { db } from '@/db';
-import { expenses, budgets, reviews, schedules, dayClosures } from '@/db/schema';
+import { expenses, budgets, reviews, schedules, dayClosures, insightLog } from '@/db/schema';
 import { analyzeExpenses } from './index';
 import type {
   EngineOutput,
@@ -7,10 +7,12 @@ import type {
   EngineBudget,
   EngineSchedule,
   EngineDayClosure,
+  InsightLogEntry,
 } from './types';
 import { getKolkataToday } from '../date';
 import { postDueSchedules } from '../schedules';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, sql } from 'drizzle-orm';
+
 
 /**
  * Loads all expenses, budgets, schedules, and day closures from the database,
@@ -77,13 +79,58 @@ export async function recomputeAndPersistEngine(targetDate?: string): Promise<En
     closedAt: c.closedAt,
   }));
 
+  // 5.5 Fetch insight logs
+  const allLogs = await db.select().from(insightLog);
+  const engineInsightLogs: InsightLogEntry[] = allLogs.map((l) => ({
+    insightKey: l.insightKey,
+    firstShown: l.firstShown,
+    lastShown: l.lastShown,
+    timesShown: l.timesShown,
+    dismissed: l.dismissed,
+    feedback: l.feedback as 'not_now' | 'not_useful' | 'planned' | null,
+    lastImpactPaise: l.lastImpactPaise,
+  }));
+
   // 6. Run pure engine
   const output = analyzeExpenses(engineExpenses, {
     now: dateKey,
     budgets: engineBudgets,
     schedules: engineSchedules,
     closedDays: engineClosures,
+    insightLogs: engineInsightLogs,
   });
+
+  // 6.5 Record shown insights in insight_log (only for non-safe_to_spend insights)
+  try {
+    for (const ins of output.insights || []) {
+      if (ins.type === 'safe_to_spend') continue;
+
+      await db
+        .insert(insightLog)
+        .values({
+          insightKey: ins.id,
+          firstShown: new Date(),
+          lastShown: new Date(),
+          timesShown: 1,
+          dismissed: false,
+          lastImpactPaise: ins.impactPaise,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: insightLog.insightKey,
+          set: {
+            lastShown: new Date(),
+            timesShown: sql`${insightLog.timesShown} + 1`,
+            lastImpactPaise: ins.impactPaise,
+            updatedAt: new Date(),
+          },
+        });
+    }
+  } catch (err) {
+    console.warn('[Engine Insight Log Update Warning]:', err);
+  }
+
 
   // 7. Upsert snapshot into reviews table
   try {
