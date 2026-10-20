@@ -9,6 +9,7 @@ import {
   boolean,
   index,
   uniqueIndex,
+  primaryKey,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
@@ -93,13 +94,23 @@ export const budgets = pgTable('budgets', {
   monthlyLimitPaise: integer('monthly_limit_paise').notNull(),
 });
 
-export const reviews = pgTable('reviews', {
-  reviewDate: date('review_date').primaryKey(),
-  statsJson: jsonb('stats_json').notNull(),
-  adviceJson: jsonb('advice_json'),
-  source: text('source', { enum: ['llm', 'fallback'] }).notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-});
+export const reviews = pgTable(
+  'reviews',
+  {
+    periodType: text('period_type', { enum: ['daily', 'weekly', 'monthly'] })
+      .notNull()
+      .default('daily'),
+    reviewDate: date('review_date').notNull(),
+    statsJson: jsonb('stats_json').notNull(),
+    adviceJson: jsonb('advice_json'),
+    source: text('source', { enum: ['llm', 'fallback'] }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.periodType, table.reviewDate] }),
+    index('reviews_period_date_idx').on(table.periodType, table.reviewDate),
+  ]
+);
 
 export const loginAttempts = pgTable(
   'login_attempts',
@@ -134,6 +145,28 @@ export const insightLog = pgTable(
   ]
 );
 
+export const experiments = pgTable(
+  'experiments',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    leverId: text('lever_id').notNull(),
+    category: text('category').notNull(),
+    metric: text('metric').notNull(),
+    target: text('target').notNull(),
+    baseline: integer('baseline').notNull(),
+    startDate: date('start_date').notNull(),
+    endDate: date('end_date').notNull(),
+    status: text('status', { enum: ['active', 'completed', 'abandoned'] })
+      .notNull()
+      .default('active'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('experiments_status_idx').on(table.status),
+    index('experiments_category_status_idx').on(table.category, table.status),
+  ]
+);
+
 export type Schedule = typeof schedules.$inferSelect;
 export type NewSchedule = typeof schedules.$inferInsert;
 export type SchedulePriceHistory = typeof schedulePriceHistory.$inferSelect;
@@ -150,4 +183,6 @@ export type LoginAttempt = typeof loginAttempts.$inferSelect;
 export type NewLoginAttempt = typeof loginAttempts.$inferInsert;
 export type InsightLog = typeof insightLog.$inferSelect;
 export type NewInsightLog = typeof insightLog.$inferInsert;
+export type Experiment = typeof experiments.$inferSelect;
+export type NewExperiment = typeof experiments.$inferInsert;
 

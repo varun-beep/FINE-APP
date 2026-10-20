@@ -29,6 +29,13 @@
       "when": 1792513471919,
       "tag": "0003_previous_wendigo",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792516271569,
+      "tag": "0004_old_spitfire",
+      "breakpoints": true
     }
   ]
 }
