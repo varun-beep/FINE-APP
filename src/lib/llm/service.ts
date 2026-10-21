@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { db } from '@/db';
 import { reviews } from '@/db/schema';
 import { eq, and, lt, desc } from 'drizzle-orm';
@@ -22,6 +23,34 @@ import { generateFallbackAdvice, generateLearningAdvice } from './fallback';
 
 const FINANCIAL_DISCLAIMER =
   'This is general guidance generated from your expense patterns, not professional financial advice.';
+
+/**
+ * Computes a SHA-256 hash of the daily review input summary.
+ * If expenses or closures change, this hash changes, triggering automatic staleness refresh.
+ */
+export function computeDailyReviewInputHash(
+  engineOutput: EngineOutput,
+  targetDate: string
+): string {
+  const { payload } = buildDailyReviewSummaryPayload(engineOutput, targetDate);
+  const hashObj = {
+    date: targetDate,
+    spentSoFarPaise: engineOutput.budgetRunRate?.spentSoFarPaise,
+    todaySpentPaise: engineOutput.allowance?.todaySpentPaise,
+    remainingDiscretionaryPaise: engineOutput.allowance?.remainingDiscretionaryPaise,
+    expenseCount: engineOutput.learning?.expenseCount,
+    distinctDaysCount: engineOutput.learning?.distinctDaysCount,
+    learningStatus: engineOutput.learning?.status,
+    daysClosed: engineOutput.coverage?.daysClosed,
+    weeksOfHistory: engineOutput.coverage?.weeksOfHistory,
+    categoriesReady: engineOutput.coverage?.categoriesReady,
+    categoriesLearning: engineOutput.coverage?.categoriesLearning,
+    anomaliesCount: engineOutput.transactionAnomalies?.length,
+    overallBudget: payload.overallBudget,
+    categories: payload.categories,
+  };
+  return createHash('sha256').update(JSON.stringify(hashObj)).digest('hex');
+}
 
 const SYSTEM_PROMPT_V2 = `You are SpendCoach AI, a personal financial coach for an individual in India.
 All amounts are in Indian Rupees (₹).
@@ -268,7 +297,10 @@ export async function generateDailyReview(
     return learningResult;
   }
 
-  // 3. CACHE AND REGENERATE CHECK
+  // 3. COMPUTE INPUT SUMMARY HASH
+  const currentInputHash = computeDailyReviewInputHash(engineOutput, dateKey);
+
+  // 4. CACHE AND REGENERATE CHECK
   const [existingReview] = await db
     .select()
     .from(reviews)
@@ -276,38 +308,75 @@ export async function generateDailyReview(
     .limit(1);
 
   let currentRegenCount = 0;
+
   if (existingReview?.adviceJson) {
     const stored = existingReview.adviceJson as StoredAdviceJson;
     currentRegenCount = stored._meta?.regenerationCount ?? 0;
+    const storedInputHash = stored._meta?.inputHash;
 
     if (!regenerate && !stored._meta?.isLearning) {
-      const parsedStored = dailyReviewAdviceSchemaV2.safeParse(stored);
-      if (parsedStored.success) {
-        const storedRec = stored as Record<string, unknown>;
-        const adviceWithLegacy = {
-          ...parsedStored.data,
-          headline: (storedRec.headline as string) || parsedStored.data.verdict,
-          action_tomorrow: (storedRec.action_tomorrow as string) || parsedStored.data.one_action_tomorrow,
-          went_well: Array.isArray(storedRec.went_well) ? storedRec.went_well : (parsedStored.data.win ? [parsedStored.data.win] : []),
-          watch_out: Array.isArray(storedRec.watch_out) ? storedRec.watch_out : [],
-          saving_ideas: Array.isArray(storedRec.saving_ideas) ? storedRec.saving_ideas : [],
-          earning_ideas: Array.isArray(storedRec.earning_ideas) ? storedRec.earning_ideas : [],
-        };
-        return {
-          date: dateKey,
-          source: (existingReview.source as 'llm' | 'fallback') || 'fallback',
-          advice: adviceWithLegacy as unknown as DailyReviewAdviceV2,
-          isLearning: false,
-          regenerationCount: currentRegenCount,
-          canRegenerate: currentRegenCount < 5,
-          disclaimer: FINANCIAL_DISCLAIMER,
-          fallbackReason: stored._meta?.fallbackReason,
-          rawModelOutput: stored._meta?.rawModelOutput,
-          guardrailRejectedNumbers: stored._meta?.guardrailRejectedNumbers,
-          candidateInsightIds: stored._meta?.candidateInsightIds,
-          actionId: stored._meta?.actionId,
-        };
+      if (storedInputHash && storedInputHash === currentInputHash) {
+        // Cache hit: input summary hash matches perfectly!
+        const parsedStored = dailyReviewAdviceSchemaV2.safeParse(stored);
+        if (parsedStored.success) {
+          const storedRec = stored as Record<string, unknown>;
+          const adviceWithLegacy = {
+            ...parsedStored.data,
+            headline: (storedRec.headline as string) || parsedStored.data.verdict,
+            action_tomorrow: (storedRec.action_tomorrow as string) || parsedStored.data.one_action_tomorrow,
+            went_well: Array.isArray(storedRec.went_well) ? storedRec.went_well : (parsedStored.data.win ? [parsedStored.data.win] : []),
+            watch_out: Array.isArray(storedRec.watch_out) ? storedRec.watch_out : [],
+            saving_ideas: Array.isArray(storedRec.saving_ideas) ? storedRec.saving_ideas : [],
+            earning_ideas: Array.isArray(storedRec.earning_ideas) ? storedRec.earning_ideas : [],
+          };
+          return {
+            date: dateKey,
+            source: (existingReview.source as 'llm' | 'fallback') || 'fallback',
+            advice: adviceWithLegacy as unknown as DailyReviewAdviceV2,
+            isLearning: false,
+            regenerationCount: currentRegenCount,
+            canRegenerate: currentRegenCount < 5,
+            disclaimer: FINANCIAL_DISCLAIMER,
+            fallbackReason: stored._meta?.fallbackReason,
+            rawModelOutput: stored._meta?.rawModelOutput,
+            guardrailRejectedNumbers: stored._meta?.guardrailRejectedNumbers,
+            candidateInsightIds: stored._meta?.candidateInsightIds,
+            actionId: stored._meta?.actionId,
+            inputHash: storedInputHash,
+          };
+        }
+      } else if (!storedInputHash) {
+        // Backward compatibility for reviews stored before hash caching
+        const parsedStored = dailyReviewAdviceSchemaV2.safeParse(stored);
+        if (parsedStored.success) {
+          const storedRec = stored as Record<string, unknown>;
+          const adviceWithLegacy = {
+            ...parsedStored.data,
+            headline: (storedRec.headline as string) || parsedStored.data.verdict,
+            action_tomorrow: (storedRec.action_tomorrow as string) || parsedStored.data.one_action_tomorrow,
+            went_well: Array.isArray(storedRec.went_well) ? storedRec.went_well : (parsedStored.data.win ? [parsedStored.data.win] : []),
+            watch_out: Array.isArray(storedRec.watch_out) ? storedRec.watch_out : [],
+            saving_ideas: Array.isArray(storedRec.saving_ideas) ? storedRec.saving_ideas : [],
+            earning_ideas: Array.isArray(storedRec.earning_ideas) ? storedRec.earning_ideas : [],
+          };
+          return {
+            date: dateKey,
+            source: (existingReview.source as 'llm' | 'fallback') || 'fallback',
+            advice: adviceWithLegacy as unknown as DailyReviewAdviceV2,
+            isLearning: false,
+            regenerationCount: currentRegenCount,
+            canRegenerate: currentRegenCount < 5,
+            disclaimer: FINANCIAL_DISCLAIMER,
+            fallbackReason: stored._meta?.fallbackReason,
+            rawModelOutput: stored._meta?.rawModelOutput,
+            guardrailRejectedNumbers: stored._meta?.guardrailRejectedNumbers,
+            candidateInsightIds: stored._meta?.candidateInsightIds,
+            actionId: stored._meta?.actionId,
+          };
+        }
       }
+      // If storedInputHash !== currentInputHash, cache is STALE:
+      // Falls through to regenerate automatically WITHOUT consuming 5/day manual regenerate limit!
     }
   }
 
@@ -339,14 +408,16 @@ export async function generateDailyReview(
           guardrailRejectedNumbers: stored._meta?.guardrailRejectedNumbers,
           candidateInsightIds: stored._meta?.candidateInsightIds,
           actionId: stored._meta?.actionId,
+          inputHash: stored._meta?.inputHash,
         };
       }
     }
   }
 
+  // Next regeneration count: only increment if manual regenerate was requested!
   const nextRegenCount = regenerate ? currentRegenCount + 1 : currentRegenCount;
 
-  // 4. RETRIEVE LAST 3 ACTION IDS (TO AVOID REPETITION)
+  // 5. RETRIEVE LAST 3 ACTION IDS (TO AVOID REPETITION)
   const last3ActionIds: string[] = [];
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -382,7 +453,7 @@ export async function generateDailyReview(
     // Silently continue if table empty or mock lacks method
   }
 
-  // 5. PREPARE PRIVACY PAYLOAD AND NUMBER GUARDRAIL ALLOWED LIST
+  // 6. PREPARE PRIVACY PAYLOAD AND NUMBER GUARDRAIL ALLOWED LIST
   const { payload, allowedNumbers, candidateInsightIds } =
     buildDailyReviewSummaryPayload(engineOutput, dateKey, last3ActionIds);
 
@@ -519,7 +590,8 @@ Please strictly fix this now:
     rawModelOutput,
     guardrailRejectedNumbers,
     candidateInsightIds,
-    actionId
+    actionId,
+    currentInputHash
   );
 
   return {
@@ -535,6 +607,7 @@ Please strictly fix this now:
     guardrailRejectedNumbers,
     candidateInsightIds,
     actionId,
+    inputHash: currentInputHash,
   };
 }
 
@@ -553,7 +626,8 @@ async function persistReviewAdvice(
   rawModelOutput?: string,
   guardrailRejectedNumbers?: number[],
   candidateInsightIds?: string[],
-  actionId?: string
+  actionId?: string,
+  inputHash?: string
 ): Promise<void> {
   const adviceToStore: StoredAdviceJson = {
     ...advice,
@@ -568,6 +642,7 @@ async function persistReviewAdvice(
       guardrailRejectedNumbers,
       candidateInsightIds,
       actionId,
+      inputHash,
     },
   };
 

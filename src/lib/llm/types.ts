@@ -153,6 +153,7 @@ export interface DailyReviewResult {
   guardrailRejectedNumbers?: number[];
   candidateInsightIds?: string[];
   actionId?: string;
+  inputHash?: string;
 }
 
 export interface WeeklyReviewResult {
@@ -191,6 +192,7 @@ export interface StoredAdviceJson extends Record<string, unknown> {
     guardrailRejectedNumbers?: number[];
     candidateInsightIds?: string[];
     actionId?: string;
+    inputHash?: string;
   };
 }
 

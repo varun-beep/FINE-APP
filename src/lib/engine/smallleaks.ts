@@ -11,10 +11,12 @@ import { formatPaiseToRupees } from '../money';
  */
 export function detectSmallLeaks(
   expenses: EngineExpense[],
-  now: string
+  now: string,
+  options?: { outlierExpenseIds?: Set<string> }
 ): Insight[] {
   const insights: Insight[] = [];
   const thirtyDaysAgo = addDays(now, -30);
+  const outlierIds = options?.outlierExpenseIds;
 
   // Filter discretionary expenses in the last 30 days
   const recentExpenses = expenses.filter(
@@ -23,7 +25,9 @@ export function detectSmallLeaks(
       e.spentOn <= now &&
       (e.kind === 'spend' || !e.kind) &&
       e.source !== 'schedule' &&
-      !e.oneOff
+      !e.scheduleId &&
+      !e.oneOff &&
+      (!outlierIds || !outlierIds.has(e.id))
   );
 
   if (recentExpenses.length === 0) {

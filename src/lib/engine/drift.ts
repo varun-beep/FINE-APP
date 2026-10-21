@@ -17,22 +17,26 @@ export interface CategoryDriftAnalysis {
  */
 export function analyzeCategoryDrift(
   expenses: EngineExpense[],
-  now: string
+  now: string,
+  options?: { outlierExpenseIds?: Set<string> }
 ): { insights: Insight[]; categoryAnalyses: CategoryDriftAnalysis[] } {
   const insights: Insight[] = [];
   const categoryAnalyses: CategoryDriftAnalysis[] = [];
 
   const twelveWeeksAgo = addDays(now, -84); // 12 weeks = 84 days
+  const outlierIds = options?.outlierExpenseIds;
 
   // Filter to eligible discretionary expenses within the 12-week window
-
+  // Exclude one_off rows, rows already flagged as outliers, schedule-posted rows, and non-spend kinds
   const windowExpenses = expenses.filter(
     (e) =>
       e.spentOn >= twelveWeeksAgo &&
       e.spentOn <= now &&
       (e.kind === 'spend' || !e.kind) &&
       e.source !== 'schedule' &&
-      !e.oneOff
+      !e.scheduleId &&
+      !e.oneOff &&
+      (!outlierIds || !outlierIds.has(e.id))
   );
 
   // Group by category

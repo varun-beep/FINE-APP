@@ -14,6 +14,7 @@
     "generate-icons": "node scripts/generate-icons.mjs",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "seed:clear": "tsx scripts/seed-clear.ts",
+    "engine:debug": "tsx scripts/engine-debug.ts",
     "smoke:llm": "tsx scripts/smoke-llm.ts"
   },
   "dependencies": {

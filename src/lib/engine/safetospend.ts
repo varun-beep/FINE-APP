@@ -41,8 +41,12 @@ export function calculateSafeToSpend(
   expenses: EngineExpense[],
   schedules: EngineSchedule[] = [],
   now: string,
-  savingsTargetRate = 0.20
+  optionsOrRate: number | { savingsTargetRate?: number } = 0.20
 ): SafeToSpendResult {
+  const savingsTargetRate =
+    typeof optionsOrRate === 'number'
+      ? optionsOrRate
+      : optionsOrRate?.savingsTargetRate ?? 0.20;
   const [yearStr, monthStr, dayStr] = now.split('-');
   const year = parseInt(yearStr, 10);
   const month = parseInt(monthStr, 10);
@@ -203,7 +207,9 @@ export function calculateSafeToSpend(
 
   // 8. Verdict
   let verdict: AllowanceVerdict = 'at';
-  if (todaySpentPaise < dailyAllowancePaise * 0.95) {
+  if (remainingDiscretionaryBeforeToday < 0 || remainingDiscretionaryPaise < 0) {
+    verdict = 'over';
+  } else if (todaySpentPaise < dailyAllowancePaise * 0.95) {
     verdict = 'under';
   } else if (todaySpentPaise > dailyAllowancePaise * 1.05) {
     verdict = 'over';
@@ -224,22 +230,39 @@ export function calculateSafeToSpend(
     daysLeftInMonth,
   };
 
-  const deltaFromAllowance = todaySpentPaise - dailyAllowancePaise;
+  const isBudgetDeficit = remainingDiscretionaryPaise < 0 || remainingDiscretionaryBeforeToday < 0;
+  const overPaise = Math.abs(
+    remainingDiscretionaryPaise < 0 ? remainingDiscretionaryPaise : remainingDiscretionaryBeforeToday
+  );
+
+  let title: string;
+  let leverDescription: string;
+  let leverMonthlySavingPaise: number;
+
+  if (isBudgetDeficit) {
+    title = `This month's discretionary budget is used up; you are ${formatPaiseToRupees(overPaise)} over`;
+    leverDescription = `Limit spending to essentials-only to recover the ${formatPaiseToRupees(overPaise)} discretionary deficit this month`;
+    leverMonthlySavingPaise = overPaise;
+  } else {
+    title = `Today's Safe-to-Spend: ${formatPaiseToRupees(dailyAllowancePaise)} (${verdict})`;
+    leverDescription = `Hold daily spend near ${formatPaiseToRupees(dailyAllowancePaise)} to protect ${formatPaiseToRupees(savingsTargetPaise)} savings target`;
+    leverMonthlySavingPaise = savingsTargetPaise;
+  }
 
   const insight: Insight = {
     id: `safe_to_spend:${now}`,
     type: 'safe_to_spend',
-    title: `Today's Safe-to-Spend: ${formatPaiseToRupees(dailyAllowancePaise)} (${verdict})`,
-    impactPaise: Math.abs(deltaFromAllowance),
+    title,
+    impactPaise: isBudgetDeficit ? overPaise : savingsTargetPaise,
     confidence: 0.95,
     actionable: true,
     firstSeen: now,
-    severity: verdict === 'over' ? 'warning' : 'info',
+    severity: isBudgetDeficit || verdict === 'over' ? 'warning' : 'info',
     levers: [
       {
         id: 'pace_allowance',
-        description: `Hold daily spend near ${formatPaiseToRupees(dailyAllowancePaise)} to protect ${formatPaiseToRupees(savingsTargetPaise)} savings target`,
-        monthlySavingPaise: Math.max(0, deltaFromAllowance),
+        description: leverDescription,
+        monthlySavingPaise: leverMonthlySavingPaise,
       },
     ],
 

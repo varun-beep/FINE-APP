@@ -4,7 +4,7 @@ import type {
   SilentFlag,
   InsightLogEntry,
 } from './types';
-import { median, medianAbsoluteDeviation, modifiedZScore } from './math';
+import { median, medianAbsoluteDeviation, modifiedZScore, daysDifference } from './math';
 import { formatPaiseToRupees } from '../money';
 
 export interface OutlierAnalysisResult {
@@ -20,6 +20,7 @@ const LUMPY_CATEGORIES = new Set(['Health', 'Shopping', 'Travel']);
  * - Detects duplicates, large one-offs, and habit spikes.
  * - Surfaces only if excess >= 5% of monthly discretionary budget OR (>= 2x median AND >= ₹500).
  * - Excludes one_off expenses and records sub-threshold anomalies as silent flags.
+ * - Any insight about a one-off that is >7 days old and unanswered becomes a one-time "Was this planned?" prompt and then goes silent.
  */
 export function detectContextAwareOutliers(
   expenses: EngineExpense[],
@@ -32,10 +33,12 @@ export function detectContextAwareOutliers(
   const insights: Insight[] = [];
   const silentFlags: SilentFlag[] = [];
 
-  // Feedback map
+  // Feedback and log map
   const feedbackMap = new Map<string, string>();
+  const logMap = new Map<string, InsightLogEntry>();
   if (options?.insightLogs) {
     for (const log of options.insightLogs) {
+      logMap.set(log.insightKey, log);
       if (log.feedback) {
         feedbackMap.set(log.insightKey, log.feedback);
       }
@@ -149,6 +152,7 @@ export function detectContextAwareOutliers(
         category: exp.category,
         merchant: exp.merchant,
         spentOn: exp.spentOn,
+        expenseId: exp.id,
       };
 
 
@@ -163,11 +167,37 @@ export function detectContextAwareOutliers(
         continue;
       }
 
+      const log = logMap.get(`outlier:${exp.id}`);
+      const ageDays = daysDifference(now, exp.spentOn);
+      const isOldOneOff = classification === 'one_off_large' && ageDays > 7;
+
+      if (isOldOneOff) {
+        if (log && log.timesShown >= 1) {
+          // Already prompted once and remained unanswered: now goes silent!
+          silentFlags.push({
+            id: `silent:outlier:${exp.id}`,
+            type: 'outlier',
+            title: `${exp.merchant || exp.category} (${formatPaiseToRupees(exp.amountPaise)})`,
+            reason: `One-off >7 days old was already prompted once as "Was this planned?" and is now silent`,
+            evidence: {
+              ...evidence,
+              ageDays,
+              timesShown: log.timesShown,
+            },
+          });
+          continue;
+        }
+      }
+
       let title = `Unusual spend in ${category}: ${formatPaiseToRupees(exp.amountPaise)}`;
       if (classification === 'possible_duplicate') {
         title = `Possible duplicate charge: ${formatPaiseToRupees(exp.amountPaise)} at ${exp.merchant || category}`;
       } else if (classification === 'one_off_large') {
-        title = `Large one-off spend: ${formatPaiseToRupees(exp.amountPaise)} at ${exp.merchant || category}`;
+        if (isOldOneOff) {
+          title = `Was this planned? Large one-off spend: ${formatPaiseToRupees(exp.amountPaise)} at ${exp.merchant || category}`;
+        } else {
+          title = `Large one-off spend: ${formatPaiseToRupees(exp.amountPaise)} at ${exp.merchant || category}`;
+        }
       } else {
         title = `Habit spike in ${category}: ${formatPaiseToRupees(exp.amountPaise)} at ${exp.merchant || category}`;
       }
@@ -193,7 +223,9 @@ export function detectContextAwareOutliers(
           : [
               {
                 id: `mark_planned_${exp.id}`,
-                description: 'Mark as planned one-off expense (removes from habit baselines)',
+                description: isOldOneOff
+                  ? 'Yes, this was planned (removes from habit baselines)'
+                  : 'Mark as planned one-off expense (removes from habit baselines)',
                 monthlySavingPaise: 0,
               },
             ],

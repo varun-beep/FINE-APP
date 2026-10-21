@@ -46,7 +46,19 @@ In the Vercel project configuration screen (under **Environment Variables**), ad
 
 ---
 
-## 4. Run Database Migration against Production DB
+## 4. Backup First (Recommended Before Migrations or Major Updates)
+
+Before running migrations or major deployments, ensure you have a backup of your data:
+1. **Export CSV from SpendCoach**: Log into the web app, navigate to `/settings`, and click **Export Data (CSV)** to download your complete expenses and history locally.
+2. **Neon Database Branch or Snapshot**:
+   - Go to your [Neon Console](https://console.neon.tech).
+   - Select your project > **Branches**.
+   - Create a new branch (e.g. `pre-migration-backup`) or take a point-in-time restore snapshot.
+   - If anything goes wrong, you can instantly restore from this branch without data loss.
+
+---
+
+## 5. Run Database Migration against Production DB
 
 Before or right after your first deployment, apply the database schema migration to your production database.
 
@@ -58,17 +70,21 @@ DATABASE_URL="your-production-neon-database-url" pnpm db:migrate
 
 ---
 
-## 5. Verify Scheduled Cron Job in Vercel
+## 6. Verify Scheduled Cron Jobs in Vercel
 
 1. Once the deployment finishes, navigate to **Project** > **Settings** > **Cron Jobs** (or the **Cron Jobs** tab on your deployment overview).
-2. Confirm that the daily review cron is registered:
-   - **Path**: `/api/cron/daily-review`
-   - **Schedule**: `30 12 * * *` (Daily at 12:30 UTC = 6:00 PM IST)
-3. Vercel automatically supplies the `Authorization: Bearer <CRON_SECRET>` header when executing the job.
+2. Confirm that the three crons are registered:
+   - **Daily Review Fallback**: `/api/cron/daily-review` — `0 18 * * *` (Daily at 18:00 UTC = 23:30 IST)
+   - **Weekly Review**: `/api/reviews/weekly` — `30 3 * * 0` (Every Sunday at 03:30 UTC = 9:00 AM IST)
+   - **Monthly Review**: `/api/reviews/monthly` — `30 3 1 * *` (1st of every month at 03:30 UTC = 9:00 AM IST)
+3. **Important Note on Vercel Hobby Crons**:
+   - All cron schedules are evaluated in **UTC**.
+   - On the Vercel Hobby plan, cron jobs execute **anywhere within the scheduled hour** (not at the exact second) and are subject to daily Hobby limits (once per day per cron). The 23:30 IST job serves as a safe fallback for days when the user does not tap "Done for today".
+4. Vercel automatically supplies the `Authorization: Bearer <CRON_SECRET>` header when executing the job.
 
 ---
 
-## 6. Install as Standalone PWA on iPhone (Safari)
+## 7. Install as Standalone PWA on iPhone (Safari)
 
 1. On your iPhone, open **Safari**.
 2. Navigate to your production Vercel URL (e.g. `https://spendcoach.vercel.app`).
@@ -82,7 +98,7 @@ DATABASE_URL="your-production-neon-database-url" pnpm db:migrate
 
 ---
 
-## 7. Post-Deploy Checklist (10 Phone Verification Tests)
+## 8. Post-Deploy Checklist (10 Phone Verification Tests)
 
 Run these 10 concrete tests on your live URL directly from your iPhone home-screen PWA:
 

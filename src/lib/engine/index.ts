@@ -1,4 +1,11 @@
-import type { EngineExpense, EngineOptions, EngineOutput, Insight, SilentFlag } from './types';
+import type {
+  EngineExpense,
+  EngineOptions,
+  EngineOutput,
+  Insight,
+  SilentFlag,
+  MonthEndProjection,
+} from './types';
 import { getKolkataToday } from '../date';
 import { evaluateLearningState } from './learning';
 import { detectAnomalies } from './anomalies';
@@ -90,30 +97,56 @@ export function analyzeExpenses(
     candidateInsights.push(safeToSpendInsight);
   }
 
+  // Learning gate check:
+  // No outlier/drift/behaviour/leak insights until coverage thresholds are met;
+  // before that return only safe_to_spend and a clear "still learning: needs X more closed days".
+  const isLearning =
+    learning.status === 'learning' ||
+    (closedDays.length > 0 && coverage.daysClosed < 14) ||
+    learning.expenseCount < 30 ||
+    learning.distinctDaysCount < 14;
+
   // Monthly discretionary budget baseline
   const monthlyDiscretionaryBudget = allowance
     ? allowance.monthlyIncomePaise - allowance.committedDuePaise - allowance.savingsTargetPaise
     : 4000000;
 
-  // 2.b OUTLIER (context-aware: lumpy vs steady, duplicates, large one-offs, habit spikes)
-  const outlierResult = detectContextAwareOutliers(expenses, now, {
-    monthlyDiscretionaryBudgetPaise: monthlyDiscretionaryBudget,
-    insightLogs,
-  });
-  candidateInsights.push(...outlierResult.insights);
-  silentFlags.push(...outlierResult.silentFlags);
+  // Outlier detection (only if ready)
+  const flaggedOutlierIds = new Set<string>();
+  if (!isLearning) {
+    // 2.b OUTLIER (context-aware: lumpy vs steady, duplicates, large one-offs, habit spikes)
+    const outlierResult = detectContextAwareOutliers(expenses, now, {
+      monthlyDiscretionaryBudgetPaise: monthlyDiscretionaryBudget,
+      insightLogs,
+    });
+    candidateInsights.push(...outlierResult.insights);
+    silentFlags.push(...outlierResult.silentFlags);
 
-  // 2.c DRIFT (4 weeks vs prior 8 weeks medians)
-  const driftResult = analyzeCategoryDrift(expenses, now);
-  candidateInsights.push(...driftResult.insights);
+    for (const ins of outlierResult.insights) {
+      if (ins.expenseId) flaggedOutlierIds.add(ins.expenseId);
+      const ev = ins.evidence as Record<string, unknown> | undefined;
+      if (typeof ev?.expenseId === 'string') flaggedOutlierIds.add(ev.expenseId);
+    }
+    for (const flag of outlierResult.silentFlags) {
+      const ev = flag.evidence as Record<string, unknown> | undefined;
+      if (typeof ev?.expenseId === 'string') flaggedOutlierIds.add(ev.expenseId);
+      if (flag.id.startsWith('silent:outlier:')) {
+        flaggedOutlierIds.add(flag.id.replace('silent:outlier:', ''));
+      }
+    }
 
-  // 2.d BEHAVIOUR (payday surge, weekend ratio, merchant concentration)
-  const behaviourInsights = analyzeBehaviour(expenses, schedules, now);
-  candidateInsights.push(...behaviourInsights);
+    // 2.c DRIFT (4 weeks vs prior 8 weeks medians)
+    const driftResult = analyzeCategoryDrift(expenses, now, { outlierExpenseIds: flaggedOutlierIds });
+    candidateInsights.push(...driftResult.insights);
 
-  // 2.e SMALL_LEAKS (>= 8 purchases in 30 days, median < ₹300, >= 3% of discretionary)
-  const leakInsights = detectSmallLeaks(expenses, now);
-  candidateInsights.push(...leakInsights);
+    // 2.d BEHAVIOUR (payday surge, weekend ratio, merchant concentration)
+    const behaviourInsights = analyzeBehaviour(expenses, schedules, now, { outlierExpenseIds: flaggedOutlierIds });
+    candidateInsights.push(...behaviourInsights);
+
+    // 2.e SMALL_LEAKS (>= 8 purchases in 30 days, median < ₹300, >= 3% of discretionary)
+    const leakInsights = detectSmallLeaks(expenses, now, { outlierExpenseIds: flaggedOutlierIds });
+    candidateInsights.push(...leakInsights);
+  }
 
   // 2.f COMMITMENT_LOAD (share of income, subscription overlap without judgement)
   if (schedules.length > 0) {
@@ -133,10 +166,23 @@ export function analyzeExpenses(
   }
 
   // 2.h PROJECTION (90th percentile capped pace + known commitments)
+  // PROJECTION is not a ranked insight: return it as a separate field (like allowance) and never let it take a top-3 slot.
+  let projection: MonthEndProjection | null = null;
   if (schedules.length > 0) {
     const projectionInsight = calculateMonthEndProjection(expenses, schedules, now);
-    if (projectionInsight) {
-      candidateInsights.push(projectionInsight);
+    if (projectionInsight && projectionInsight.evidence) {
+      const ev = projectionInsight.evidence as Record<string, number>;
+      projection = {
+        totalProjectedPaise: ev.totalProjectedPaise ?? projectionInsight.impactPaise,
+        lowPaise: ev.lowPaise ?? Math.round(projectionInsight.impactPaise * 0.92),
+        highPaise: ev.highPaise ?? Math.round(projectionInsight.impactPaise * 1.12),
+        spentSoFarThisMonthPaise: ev.spentSoFarThisMonthPaise ?? 0,
+        committedKnownRestOfMonthPaise: ev.committedKnownRestOfMonthPaise ?? 0,
+        projectedDiscretionaryRemainingPaise: ev.projectedDiscretionaryRemainingPaise ?? 0,
+        cappedP90Paise: ev.cappedP90Paise ?? 0,
+        daysRemaining: ev.daysRemaining ?? 0,
+        title: projectionInsight.title,
+      };
     }
   }
 
@@ -166,12 +212,13 @@ export function analyzeExpenses(
     evaluatedAt: now,
     coverage,
     allowance,
-    insights: topInsights,
+    projection,
+    insights: isLearning && safeToSpendInsight ? [safeToSpendInsight] : topInsights,
     silentFlags,
     allRankedInsights,
     learning,
-    transactionAnomalies,
-    dailyAnomalies,
+    transactionAnomalies: isLearning ? [] : transactionAnomalies,
+    dailyAnomalies: isLearning ? [] : dailyAnomalies,
     recurring,
     budgetRunRate,
     trends,

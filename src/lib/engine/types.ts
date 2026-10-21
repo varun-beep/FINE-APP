@@ -253,10 +253,23 @@ export interface OverallTrends {
   categories: CategoryTrend[];
 }
 
+export interface MonthEndProjection {
+  totalProjectedPaise: number;
+  lowPaise: number;
+  highPaise: number;
+  spentSoFarThisMonthPaise: number;
+  committedKnownRestOfMonthPaise: number;
+  projectedDiscretionaryRemainingPaise: number;
+  cappedP90Paise: number;
+  daysRemaining: number;
+  title: string;
+}
+
 export interface EngineOutput {
   evaluatedAt: string; // YYYY-MM-DD
   coverage?: CoverageReport;
   allowance?: SafeToSpendAllowance | null;
+  projection?: MonthEndProjection | null;
   insights?: Insight[];
   silentFlags?: SilentFlag[];
   allRankedInsights?: Insight[];

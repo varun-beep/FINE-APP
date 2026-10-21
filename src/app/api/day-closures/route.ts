@@ -6,6 +6,7 @@ import { getKolkataToday, getKolkataYesterday } from '@/lib/date';
 import { addDays } from '@/lib/engine/math';
 import { sql } from 'drizzle-orm';
 import { triggerAsyncRecompute, getLatestEngineOutput } from '@/lib/engine/db';
+import { generateDailyReview } from '@/lib/llm/service';
 
 export async function GET() {
   try {
@@ -119,6 +120,13 @@ export async function POST(req: NextRequest) {
       .returning();
 
     triggerAsyncRecompute();
+
+    // Pregenerate daily review on day closure and cache with input summary hash
+    try {
+      await generateDailyReview(day, { regenerate: false });
+    } catch (e) {
+      console.error('Failed to generate daily review on day closure:', e);
+    }
 
     return NextResponse.json({
       success: true,

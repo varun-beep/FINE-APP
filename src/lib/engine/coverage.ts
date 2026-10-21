@@ -54,6 +54,7 @@ export function evaluateCoverage(
   }
 
   if (daysClosed < 14) {
+    reasons.push(`still learning: needs ${14 - daysClosed} more closed days`);
     reasons.push(`Need ${14 - daysClosed} more closed days (have ${daysClosed}/14) for habit baseline`);
   }
   if (weeksOfHistory < 8) {

@@ -13,10 +13,12 @@ import { formatPaiseToRupees } from '../money';
 export function analyzeBehaviour(
   expenses: EngineExpense[],
   schedules: EngineSchedule[] = [],
-  now: string
+  now: string,
+  options?: { outlierExpenseIds?: Set<string> }
 ): Insight[] {
   const insights: Insight[] = [];
   const ninetyDaysAgo = addDays(now, -90);
+  const outlierIds = options?.outlierExpenseIds;
 
   const eligibleExpenses = expenses.filter(
     (e) =>
@@ -24,7 +26,9 @@ export function analyzeBehaviour(
       e.spentOn <= now &&
       (e.kind === 'spend' || !e.kind) &&
       e.source !== 'schedule' &&
-      !e.oneOff
+      !e.scheduleId &&
+      !e.oneOff &&
+      (!outlierIds || !outlierIds.has(e.id))
   );
 
   if (eligibleExpenses.length < 15) {

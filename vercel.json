@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/daily-review",
-      "schedule": "30 12 * * *"
+      "schedule": "0 18 * * *"
     },
     {
       "path": "/api/reviews/weekly",
