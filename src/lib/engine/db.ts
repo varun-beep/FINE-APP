@@ -1,5 +1,5 @@
 import { db } from '@/db';
-import { expenses, budgets, reviews, schedules, dayClosures, insightLog, experiments } from '@/db/schema';
+import { expenses, budgets, reviews, schedules, dayClosures, insightLog, experiments, appSettings } from '@/db/schema';
 import { analyzeExpenses } from './index';
 import type {
   EngineOutput,
@@ -12,7 +12,7 @@ import type {
 } from './types';
 import { getKolkataToday } from '../date';
 import { postDueSchedules } from '../schedules';
-import { eq, desc, sql, and } from 'drizzle-orm';
+import { eq, desc, and } from 'drizzle-orm';
 
 
 /**
@@ -107,6 +107,13 @@ export async function recomputeAndPersistEngine(targetDate?: string): Promise<En
     status: e.status,
   }));
 
+  // 5.7 Fetch settings (e.g. savings target rate, default 20%)
+  const settingsRows = await db.select().from(appSettings);
+  const savingsSetting = settingsRows.find((s) => s.key === 'savings_target_rate');
+  const savingsTargetRate = savingsSetting && !isNaN(parseFloat(savingsSetting.value))
+    ? parseFloat(savingsSetting.value)
+    : 0.20;
+
   // 6. Run pure engine
   const output = analyzeExpenses(engineExpenses, {
     now: dateKey,
@@ -115,38 +122,11 @@ export async function recomputeAndPersistEngine(targetDate?: string): Promise<En
     closedDays: engineClosures,
     insightLogs: engineInsightLogs,
     experiments: engineExperiments,
+    savingsTargetRate,
   });
 
-  // 6.5 Record shown insights in insight_log (only for non-safe_to_spend insights)
-  try {
-    for (const ins of output.insights || []) {
-      if (ins.type === 'safe_to_spend') continue;
-
-      await db
-        .insert(insightLog)
-        .values({
-          insightKey: ins.id,
-          firstShown: new Date(),
-          lastShown: new Date(),
-          timesShown: 1,
-          dismissed: false,
-          lastImpactPaise: ins.impactPaise,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .onConflictDoUpdate({
-          target: insightLog.insightKey,
-          set: {
-            lastShown: new Date(),
-            timesShown: sql`${insightLog.timesShown} + 1`,
-            lastImpactPaise: ins.impactPaise,
-            updatedAt: new Date(),
-          },
-        });
-    }
-  } catch (err) {
-    console.warn('[Engine Insight Log Update Warning]:', err);
-  }
+  // Note: runEngineAnalysis is strictly read-only for insight_log.
+  // insight_log.times_shown increments ONLY when a client reports it was displayed (POST /api/insights/seen).
 
 
   // 7. Upsert snapshot into reviews table

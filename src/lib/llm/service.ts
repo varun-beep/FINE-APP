@@ -102,7 +102,8 @@ async function callGroqChat(
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
   apiKey: string,
   baseUrl: string,
-  model: string
+  model: string,
+  timeoutMs: number = 14000
 ): Promise<string> {
   const endpoint = `${baseUrl.replace(/\/+$/, '')}/chat/completions`;
 
@@ -119,7 +120,7 @@ async function callGroqChat(
       temperature: 0.3,
       max_tokens: 700,
     }),
-    signal: AbortSignal.timeout(20000), // 20-second timeout
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!response.ok) {
@@ -475,6 +476,10 @@ export async function generateDailyReview(
     finalSource = 'fallback';
   } else {
     try {
+      const TOTAL_LLM_BUDGET_MS = 22000;
+      const startTime = Date.now();
+      const firstCallTimeout = 14000; // First call gets up to 14s
+
       const userMessage = JSON.stringify(payload, null, 2);
       const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
         { role: 'system', content: SYSTEM_PROMPT_V2 },
@@ -482,7 +487,7 @@ export async function generateDailyReview(
       ];
 
       // First LLM call
-      rawModelOutput = await callGroqChat(messages, apiKey, baseUrl, model);
+      rawModelOutput = await callGroqChat(messages, apiKey, baseUrl, model, firstCallTimeout);
       const firstCheck = parseAndValidateLlmOutput(
         rawModelOutput,
         allowedNumbers,
@@ -494,44 +499,55 @@ export async function generateDailyReview(
         finalAdvice = firstCheck.advice;
         finalSource = 'llm';
       } else {
-        // Record intermediate reason and retry once
+        // Record intermediate reason
         if (firstCheck.reason === 'guardrail_rejected') {
           guardrailRejectedNumbers = firstCheck.rejectedNumbers;
         }
 
-        const repairMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-          ...messages,
-          { role: 'assistant', content: rawModelOutput },
-          {
-            role: 'user',
-            content: `Your previous response was rejected due to: ${firstCheck.error}.
+        const elapsedMs = Date.now() - startTime;
+        const remainingBudgetMs = TOTAL_LLM_BUDGET_MS - elapsedMs;
+
+        // Only retry if we have at least 3 seconds left in the 22s budget
+        if (remainingBudgetMs >= 3000) {
+          const repairMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+            ...messages,
+            { role: 'assistant', content: rawModelOutput },
+            {
+              role: 'user',
+              content: `Your previous response was rejected due to: ${firstCheck.error}.
 Please strictly fix this now:
 1. ONLY use numbers present in candidate insights or allowance.
 2. Every insight_id MUST come from the supplied candidateInsights: [${candidateInsightIds.join(', ')}]. If none, leave insights as [].
 3. one_action_tomorrow must be concrete and not repeat: [${last3ActionIds.join(', ')}].
 4. Produce valid JSON adhering strictly to the schema.`,
-          },
-        ];
+            },
+          ];
 
-        const retryRaw = await callGroqChat(repairMessages, apiKey, baseUrl, model);
-        rawModelOutput = retryRaw;
-        const retryCheck = parseAndValidateLlmOutput(
-          retryRaw,
-          allowedNumbers,
-          candidateInsightIds,
-          last3ActionIds
-        );
+          const retryRaw = await callGroqChat(repairMessages, apiKey, baseUrl, model, remainingBudgetMs);
+          rawModelOutput = retryRaw;
+          const retryCheck = parseAndValidateLlmOutput(
+            retryRaw,
+            allowedNumbers,
+            candidateInsightIds,
+            last3ActionIds
+          );
 
-        if (retryCheck.success) {
-          finalAdvice = retryCheck.advice;
-          finalSource = 'llm';
-          guardrailRejectedNumbers = undefined;
-        } else {
-          fallbackReason = retryCheck.reason;
-          if (retryCheck.reason === 'guardrail_rejected') {
-            guardrailRejectedNumbers = retryCheck.rejectedNumbers;
+          if (retryCheck.success) {
+            finalAdvice = retryCheck.advice;
+            finalSource = 'llm';
+            guardrailRejectedNumbers = undefined;
+          } else {
+            fallbackReason = retryCheck.reason;
+            if (retryCheck.reason === 'guardrail_rejected') {
+              guardrailRejectedNumbers = retryCheck.rejectedNumbers;
+            }
+            console.warn(`[LLM Fallback]: Reason: ${fallbackReason} (${retryCheck.error})`);
+            finalAdvice = generateFallbackAdvice(engineOutput, last3ActionIds);
+            finalSource = 'fallback';
           }
-          console.warn(`[LLM Fallback]: Reason: ${fallbackReason} (${retryCheck.error})`);
+        } else {
+          fallbackReason = firstCheck.reason;
+          console.warn(`[LLM Fallback]: Remaining budget (${remainingBudgetMs}ms) insufficient for retry; falling back.`);
           finalAdvice = generateFallbackAdvice(engineOutput, last3ActionIds);
           finalSource = 'fallback';
         }

@@ -265,6 +265,37 @@ describe('Regression Tests: Engine Logic Defects (Item 2)', () => {
       expect(needsDaysReason).toBeDefined();
       expect(needsDaysReason).toContain('more closed days');
     });
+
+    it('regression: 160 expenses over 91 days with ZERO closures returns only safe_to_spend', () => {
+      const expenses: EngineExpense[] = [];
+      for (let i = 0; i < 160; i++) {
+        const dayOffset = i % 91;
+        expenses.push({
+          id: `seed-exp-${i}`,
+          amountPaise: 25000 + (i % 10) * 1000,
+          category: 'Food',
+          spentOn: addDays(FIXED_NOW, -dayOffset),
+          kind: 'spend',
+          source: 'manual',
+        });
+      }
+
+      const result = analyzeExpenses(expenses, {
+        now: FIXED_NOW,
+        closedDays: [], // ZERO closures
+      });
+
+      expect(result.learning.status).toBe('learning');
+      expect(result.coverage?.daysClosed).toBe(0);
+      expect(result.isLearning).toBe(true);
+      expect(result.gateReasons?.length).toBeGreaterThan(0);
+      expect(result.gateReasons?.[0]).toContain('still learning: needs 14 more closed days');
+
+      // Only safe_to_spend is allowed; all others suppressed
+      expect(result.insights?.every((i) => i.type === 'safe_to_spend')).toBe(true);
+      const nonSafeInsights = (result.insights || []).filter((i) => i.type !== 'safe_to_spend');
+      expect(nonSafeInsights).toHaveLength(0);
+    });
   });
 
   // =========================================================================

@@ -215,8 +215,8 @@ export function detectContextAwareOutliers(
         levers: isDuplicate
           ? [
               {
-                id: `delete_dup_${exp.id}`,
-                description: `Delete duplicate ${formatPaiseToRupees(exp.amountPaise)} transaction`,
+                id: `check_charge_${exp.id}`,
+                description: 'Check this charge with the merchant or your bank',
                 monthlySavingPaise: exp.amountPaise,
               },
             ]

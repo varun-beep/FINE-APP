@@ -274,6 +274,8 @@ export interface EngineOutput {
   silentFlags?: SilentFlag[];
   allRankedInsights?: Insight[];
   learning: OverallLearningState;
+  isLearning?: boolean;
+  gateReasons?: string[];
   transactionAnomalies: TransactionAnomaly[];
   dailyAnomalies: DailyTotalAnomaly[];
   recurring: RecurringItem[];

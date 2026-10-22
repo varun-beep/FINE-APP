@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { db } from '@/db';
 import { dayClosures, expenses } from '@/db/schema';
 import { createDayClosureSchema } from '@/lib/validations';
@@ -119,14 +119,16 @@ export async function POST(req: NextRequest) {
       })
       .returning();
 
-    triggerAsyncRecompute();
-
-    // Pregenerate daily review on day closure and cache with input summary hash
-    try {
-      await generateDailyReview(day, { regenerate: false });
-    } catch (e) {
-      console.error('Failed to generate daily review on day closure:', e);
-    }
+    // Serverless safety: execute background review generation via after()
+    // Returns immediately to the client while keeping the Vercel execution context alive
+    after(async () => {
+      triggerAsyncRecompute();
+      try {
+        await generateDailyReview(day, { regenerate: false });
+      } catch (e) {
+        console.error('Failed to generate daily review on day closure:', e);
+      }
+    });
 
     return NextResponse.json({
       success: true,

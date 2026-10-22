@@ -18,6 +18,7 @@ import type {
   EngineBudget,
   EngineDayClosure,
   InsightLogEntry,
+  Insight,
 } from '@/lib/engine/types';
 import { addDays } from '@/lib/engine/math';
 
@@ -627,9 +628,44 @@ describe('SpendCoach Brain Engine & Insights', () => {
       expect(weekendInsight?.title).toContain('Weekend Spending');
     });
 
-    it('24. detects merchant concentration when single merchant has >= 65% of category spend', () => {
+    it('24. detects merchant concentration when single merchant has >= 65% of category spend with >= 3 merchants, >= 10 tx, >= 5% spend', () => {
       const expenses: EngineExpense[] = [];
-      // 15 Food expenses: 12 Swiggy (₹1,000 each = ₹12,000), 3 Others (₹500 each = ₹1,500) -> 88% Swiggy
+      // 15 Food expenses: 12 Swiggy (₹1,000 each = ₹12,000), 2 Local Cafe (₹500 each), 1 Zomato (₹500) -> 3 distinct merchants, 15 tx, 88% Swiggy
+      for (let i = 1; i <= 12; i++) {
+        expenses.push({
+          id: `swiggy-${i}`,
+          amountPaise: 100000,
+          category: 'Food',
+          merchant: 'Swiggy',
+          spentOn: addDays(FIXED_NOW, -i),
+        });
+      }
+      for (let i = 1; i <= 2; i++) {
+        expenses.push({
+          id: `other-${i}`,
+          amountPaise: 50000,
+          category: 'Food',
+          merchant: 'Local Cafe',
+          spentOn: addDays(FIXED_NOW, -i - 12),
+        });
+      }
+      expenses.push({
+        id: 'other-3',
+        amountPaise: 50000,
+        category: 'Food',
+        merchant: 'Zomato',
+        spentOn: addDays(FIXED_NOW, -15),
+      });
+
+      const res = analyzeBehaviour(expenses, [], FIXED_NOW);
+      const concInsight = res.find((i) => i.id.includes('concentration:Food:Swiggy'));
+      expect(concInsight).toBeDefined();
+      expect(concInsight?.title).toContain('Swiggy accounts for');
+    });
+
+    it('24b. does NOT flag merchant concentration when category has < 3 distinct merchants', () => {
+      const expenses: EngineExpense[] = [];
+      // 15 expenses but only 2 merchants: Swiggy and Local Cafe
       for (let i = 1; i <= 12; i++) {
         expenses.push({
           id: `swiggy-${i}`,
@@ -650,9 +686,81 @@ describe('SpendCoach Brain Engine & Insights', () => {
       }
 
       const res = analyzeBehaviour(expenses, [], FIXED_NOW);
-      const concInsight = res.find((i) => i.id.includes('concentration:Food:Swiggy'));
-      expect(concInsight).toBeDefined();
-      expect(concInsight?.title).toContain('Swiggy accounts for');
+      const concInsight = res.find((i) => i.id.includes('concentration:Food'));
+      expect(concInsight).toBeUndefined();
+    });
+
+    it('24c. does NOT flag merchant concentration when category has < 10 transactions', () => {
+      const expenses: EngineExpense[] = [];
+      // Only 8 expenses across 3 merchants
+      for (let i = 1; i <= 6; i++) {
+        expenses.push({
+          id: `swiggy-${i}`,
+          amountPaise: 100000,
+          category: 'Food',
+          merchant: 'Swiggy',
+          spentOn: addDays(FIXED_NOW, -i),
+        });
+      }
+      expenses.push({
+        id: 'cafe-1',
+        amountPaise: 50000,
+        category: 'Food',
+        merchant: 'Local Cafe',
+        spentOn: addDays(FIXED_NOW, -7),
+      });
+      expenses.push({
+        id: 'zomato-1',
+        amountPaise: 50000,
+        category: 'Food',
+        merchant: 'Zomato',
+        spentOn: addDays(FIXED_NOW, -8),
+      });
+
+      const res = analyzeBehaviour(expenses, [], FIXED_NOW);
+      const concInsight = res.find((i) => i.id.includes('concentration:Food'));
+      expect(concInsight).toBeUndefined();
+    });
+
+    it('24d. does NOT flag merchant concentration when category is < 5% of discretionary spend', () => {
+      const expenses: EngineExpense[] = [];
+      // 10 Books expenses of ₹100 each = ₹1,000 across 3 merchants (Amazon: ₹800 = 80%)
+      for (let i = 1; i <= 8; i++) {
+        expenses.push({
+          id: `book-${i}`,
+          amountPaise: 10000,
+          category: 'Education',
+          merchant: 'Amazon',
+          spentOn: addDays(FIXED_NOW, -i),
+        });
+      }
+      expenses.push({
+        id: 'book-9',
+        amountPaise: 10000,
+        category: 'Education',
+        merchant: 'Bookstore A',
+        spentOn: addDays(FIXED_NOW, -9),
+      });
+      expenses.push({
+        id: 'book-10',
+        amountPaise: 10000,
+        category: 'Education',
+        merchant: 'Bookstore B',
+        spentOn: addDays(FIXED_NOW, -10),
+      });
+
+      // Massive Shopping spend of ₹1,00,000 making Education ₹1,000 only 1% (< 5%) of total discretionary spend
+      expenses.push({
+        id: 'shop-huge',
+        amountPaise: 10000000,
+        category: 'Shopping',
+        merchant: 'Mall',
+        spentOn: addDays(FIXED_NOW, -2),
+      });
+
+      const res = analyzeBehaviour(expenses, [], FIXED_NOW);
+      const concInsight = res.find((i) => i.id.includes('concentration:Education'));
+      expect(concInsight).toBeUndefined();
     });
 
     it('25. does not flag concentration when merchants are diverse', () => {
@@ -1084,6 +1192,71 @@ describe('SpendCoach Brain Engine & Insights', () => {
       const run2 = analyzeExpenses(expenses, options);
 
       expect(JSON.stringify(run1)).toBe(JSON.stringify(run2));
+    });
+
+    it('45. possible_duplicate insights rank immediately after safe_to_spend regardless of impact, with lever "Check this charge with the merchant or your bank"', () => {
+      const safeToSpendInsight: Insight = {
+        id: 'safe_to_spend:2026-10-20',
+        type: 'safe_to_spend',
+        title: "Today's Safe-to-Spend: ₹1,500.00",
+        impactPaise: 3000000,
+        confidence: 0.95,
+        actionable: true,
+        firstSeen: FIXED_NOW,
+        severity: 'info',
+        levers: [],
+        evidence: {},
+      };
+
+      // A massive drift insight (impact ₹50,000)
+      const massiveDrift: Insight = {
+        id: 'drift:Shopping:2026-W42',
+        type: 'drift',
+        title: 'Massive Shopping Drift',
+        impactPaise: 5000000,
+        confidence: 0.99,
+        actionable: true,
+        firstSeen: FIXED_NOW,
+        severity: 'alert',
+        levers: [],
+        evidence: {},
+      };
+
+      // A small duplicate charge (only ₹250)
+      const duplicateInsight: Insight = {
+        id: 'outlier:dup-charge-123',
+        type: 'outlier',
+        title: 'Possible duplicate charge: ₹250.00 at Swiggy',
+        impactPaise: 25000, // Small impact!
+        confidence: 0.95,
+        actionable: true,
+        firstSeen: FIXED_NOW,
+        severity: 'alert',
+        levers: [
+          {
+            id: 'check_charge_dup-charge-123',
+            description: 'Check this charge with the merchant or your bank',
+            monthlySavingPaise: 25000,
+          },
+        ],
+        evidence: {
+          classification: 'possible_duplicate',
+          isDuplicate: true,
+        },
+      };
+
+      const { topInsights } = rankAndFilterInsights(
+        [massiveDrift, duplicateInsight, safeToSpendInsight],
+        { now: FIXED_NOW }
+      );
+
+      // Safe to spend is 1st
+      expect(topInsights[0].type).toBe('safe_to_spend');
+      // Duplicate is 2nd (immediately after safe_to_spend despite having 1/200th the impact of drift!)
+      expect(topInsights[1].id).toBe('outlier:dup-charge-123');
+      expect(topInsights[1].levers[0].description).toBe('Check this charge with the merchant or your bank');
+      // Drift is 3rd
+      expect(topInsights[2].id).toBe('drift:Shopping:2026-W42');
     });
   });
 });

@@ -15,6 +15,10 @@
     "seed:demo": "tsx scripts/seed-demo.ts",
     "seed:clear": "tsx scripts/seed-clear.ts",
     "engine:debug": "tsx scripts/engine-debug.ts",
+    "preflight": "tsx scripts/preflight.ts",
+    "eval:coach": "tsx scripts/eval-coach.ts",
+    "verify:live": "tsx scripts/verify-live.ts",
+    "verify:drivers": "tsx scripts/verify-drivers.ts",
     "smoke:llm": "tsx scripts/smoke-llm.ts"
   },
   "dependencies": {

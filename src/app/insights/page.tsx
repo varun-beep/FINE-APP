@@ -36,8 +36,20 @@ export default function InsightsPage() {
       const url = fresh ? '/api/insights?fresh=true' : '/api/insights';
       const res = await fetch(url);
       if (res.ok) {
-        const json: EngineOutput = await res.json();
+        const json = await res.json();
         setData(json);
+
+        // Report seen insights to increment times_shown ONLY on client render
+        const renderedIds = (json.insights || [])
+          .map((i: { id: string }) => i.id)
+          .filter((id: string) => !id.startsWith('safe_to_spend'));
+        if (renderedIds.length > 0) {
+          fetch('/api/insights/seen', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: renderedIds }),
+          }).catch((e) => console.warn('Failed to record seen insights', e));
+        }
 
         // Populate budget input values
         if (json.budgetRunRate?.categories) {

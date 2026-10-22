@@ -83,6 +83,7 @@ async function main() {
     console.log(`  Created Tables: ${tableNames.join(', ')}`);
 
     const expectedTables = [
+      'app_settings',
       'budgets',
       'day_closures',
       'experiments',

@@ -115,6 +115,10 @@ describe('3. Dynamic Route Protection & Middleware Enforcement', () => {
     '/api/experiments',
     '/api/experiments/[id]',
     '/api/insights/feedback',
+    '/api/insights/seen',
+    '/api/settings',
+    '/api/settings/close-past-days',
+    '/api/onboarding',
   ]);
 
   const discovered = discoverAllAppRoutes();

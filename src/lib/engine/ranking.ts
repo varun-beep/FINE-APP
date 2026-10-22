@@ -199,13 +199,38 @@ export function rankAndFilterInsights(
     }
   }
 
-  // Sort descending by score
-  scoredInsights.sort((a, b) => (b.score || 0) - (a.score || 0));
+  // Helper to check if an insight represents a possible duplicate charge
+  const isDuplicateInsight = (ins: Insight) => {
+    const ev = ins.evidence as Record<string, unknown> | undefined;
+    return (
+      ev?.classification === 'possible_duplicate' ||
+      ev?.isDuplicate === true ||
+      ins.id.includes('duplicate') ||
+      ins.title.toLowerCase().includes('possible duplicate')
+    );
+  };
+
+  const duplicateInsights: Insight[] = [];
+  const otherScoredInsights: Insight[] = [];
+
+  for (const ins of scoredInsights) {
+    if (isDuplicateInsight(ins)) {
+      duplicateInsights.push(ins);
+    } else {
+      otherScoredInsights.push(ins);
+    }
+  }
+
+  // Duplicate insights rank immediately after safe_to_spend regardless of impact
+  duplicateInsights.sort((a, b) => (b.score || 0) - (a.score || 0));
+  otherScoredInsights.sort((a, b) => (b.score || 0) - (a.score || 0));
+
+  const allRanked = [...duplicateInsights, ...otherScoredInsights];
 
   // Take top 3 non-safe insights
-  const top3 = scoredInsights.slice(0, 3);
+  const top3 = allRanked.slice(0, 3);
 
-  // Always prepend SAFE_TO_SPEND if available
+  // Always prepend SAFE_TO_SPEND if available, followed immediately by duplicates
   const topInsights: Insight[] = [];
   if (safeToSpendInsight) {
     topInsights.push(safeToSpendInsight);
@@ -214,6 +239,6 @@ export function rankAndFilterInsights(
 
   return {
     topInsights,
-    allRankedInsights: scoredInsights,
+    allRankedInsights: allRanked,
   };
 }

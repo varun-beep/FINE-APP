@@ -55,7 +55,10 @@ export function generateFallbackAdvice(
   if (allowance) {
     const todayStr = formatPaiseToRupees(allowance.todaySpentPaise);
     const allowStr = formatPaiseToRupees(allowance.dailyAllowancePaise);
-    if (allowance.verdict === 'under') {
+    if (allowance.remainingDiscretionaryPaise < 0) {
+      const overPaise = Math.abs(allowance.remainingDiscretionaryPaise);
+      verdict = `This month's discretionary budget is used up; you are ${formatPaiseToRupees(overPaise)} over.`;
+    } else if (allowance.verdict === 'under') {
       const diffStr = formatPaiseToRupees(
         allowance.dailyAllowancePaise - allowance.todaySpentPaise
       );
@@ -127,7 +130,10 @@ export function generateFallbackAdvice(
 
   if (chosenLever && chosenLever.savingPaise > 0) {
     oneActionTomorrow = `${chosenLever.description} to save ${formatPaiseToRupees(chosenLever.savingPaise)} this month (lever: ${chosenLever.id}).`;
-  } else if (allowance) {
+  } else if (allowance && allowance.remainingDiscretionaryPaise < 0) {
+    const overPaise = Math.abs(allowance.remainingDiscretionaryPaise);
+    oneActionTomorrow = `Limit spending to essentials-only to recover the ${formatPaiseToRupees(overPaise)} discretionary deficit this month (lever: pace_allowance).`;
+  } else if (allowance && allowance.tomorrowDailyAllowancePaise > 0) {
     const tomorrowStr = formatPaiseToRupees(allowance.tomorrowDailyAllowancePaise);
     oneActionTomorrow = `Keep discretionary spending within tomorrow's adjusted allowance of ${tomorrowStr} to protect your monthly savings target.`;
   } else {

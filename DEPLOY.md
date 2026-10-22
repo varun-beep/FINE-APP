@@ -58,7 +58,22 @@ Before running migrations or major deployments, ensure you have a backup of your
 
 ---
 
-## 5. Run Database Migration against Production DB
+---
+
+## 5. Preflight Verification (Run Before Deploying)
+
+Before deploying or pushing to production, run the local preflight check:
+```bash
+pnpm preflight
+```
+This performs a zero-side-effect sanity check:
+- Validates environment secret formats (APP_PASSCODE, SESSION_SECRET >= 32 chars, CRON_SECRET, DATABASE_URL).
+- Validates Postgres database connectivity and all 8 applied schema migrations.
+- Validates Groq LLM API connectivity and model availability.
+
+---
+
+## 6. Run Database Migration against Production DB
 
 Before or right after your first deployment, apply the database schema migration to your production database.
 
@@ -70,10 +85,10 @@ DATABASE_URL="your-production-neon-database-url" pnpm db:migrate
 
 ---
 
-## 6. Verify Scheduled Cron Jobs in Vercel
+## 7. Verify Scheduled Cron Jobs in Vercel
 
 1. Once the deployment finishes, navigate to **Project** > **Settings** > **Cron Jobs** (or the **Cron Jobs** tab on your deployment overview).
-2. Confirm that the three crons are registered:
+2. Confirm that the three crons are registered (from `vercel.json`):
    - **Daily Review Fallback**: `/api/cron/daily-review` — `0 18 * * *` (Daily at 18:00 UTC = 23:30 IST)
    - **Weekly Review**: `/api/reviews/weekly` — `30 3 * * 0` (Every Sunday at 03:30 UTC = 9:00 AM IST)
    - **Monthly Review**: `/api/reviews/monthly` — `30 3 1 * *` (1st of every month at 03:30 UTC = 9:00 AM IST)
@@ -84,7 +99,26 @@ DATABASE_URL="your-production-neon-database-url" pnpm db:migrate
 
 ---
 
-## 7. Install as Standalone PWA on iPhone (Safari)
+## 8. Automated Live Verification (`pnpm verify:live`)
+
+Immediately after deploying to Vercel or any server, run the automated live verification script against your production URL:
+
+```bash
+pnpm verify:live https://your-spendcoach.vercel.app
+```
+This automatically verifies:
+1. `/api/health` returns HTTP 200 with `db: ok`.
+2. `/manifest.webmanifest` serves valid PWA manifest with `display: standalone`.
+3. `/apple-touch-icon.png` returns a valid >= 180x180 px iOS icon.
+4. Passcode brute-force security rejects wrong passcode with HTTP 401.
+5. Passcode acceptance returns HTTP 200 and issues 30-day session cookie.
+6. Route protection blocks unauthorized access to `/api/daily-review` with HTTP 401.
+7. Authenticated `/api/daily-review` returns grounded advice JSON.
+8. `/api/insights/seen` tracks insight views with HTTP 200.
+
+---
+
+## 9. Install as Standalone PWA on iPhone (Safari)
 
 1. On your iPhone, open **Safari**.
 2. Navigate to your production Vercel URL (e.g. `https://spendcoach.vercel.app`).
@@ -98,7 +132,9 @@ DATABASE_URL="your-production-neon-database-url" pnpm db:migrate
 
 ---
 
-## 8. Post-Deploy Checklist (10 Phone Verification Tests)
+## 10. Post-Deploy Checklist (Manual iPhone Testing)
+
+Run the manual checklist detailed in [MANUAL_TEST.md](file:///Users/varun/Desktop/FINE-APP/MANUAL_TEST.md) directly on your device.
 
 Run these 10 concrete tests on your live URL directly from your iPhone home-screen PWA:
 

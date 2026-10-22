@@ -55,14 +55,14 @@ export function analyzeExpenses(
   const now = options?.now || getKolkataToday();
   const budgets = options?.budgets || [];
   const schedules = options?.schedules || [];
-  const closedDays = options?.closedDays || [];
+  const closedDays = options?.closedDays;
   const insightLogs = options?.insightLogs || [];
 
   // 1. Learning state (counts only logged or no_spend closed days; excludes skipped days)
   const learning = evaluateLearningState(expenses, closedDays);
 
   // 2. Coverage report (honesty: what is ready vs what data is missing)
-  const coverage = evaluateCoverage(expenses, closedDays, now);
+  const coverage = evaluateCoverage(expenses, closedDays || [], now);
 
   // 3. Backward-compatible legacy anomaly, recurring, budget, and trend modules
   const { transactionAnomalies, dailyAnomalies } = detectAnomalies(
@@ -98,13 +98,24 @@ export function analyzeExpenses(
   }
 
   // Learning gate check:
-  // No outlier/drift/behaviour/leak insights until coverage thresholds are met;
-  // before that return only safe_to_spend and a clear "still learning: needs X more closed days".
-  const isLearning =
-    learning.status === 'learning' ||
-    (closedDays.length > 0 && coverage.daysClosed < 14) ||
-    learning.expenseCount < 30 ||
-    learning.distinctDaysCount < 14;
+  // No outlier/drift/behaviour/leak insights until BOTH conditions are met:
+  //   1. coverage.daysClosed >= 14 (user has explicitly closed at least 14 days)
+  //   2. learning.expenseCount >= 30 (enough discretionary expenses logged)
+  // NOTE: We removed the old guard `closedDays.length > 0 &&` that was a bug:
+  //   when no day_closures existed at all, daysClosed was 0 but the gate was bypassed.
+  const daysClosedCount =
+    options?.closedDays !== undefined
+      ? coverage.daysClosed
+      : learning.distinctDaysCount;
+
+  const gateReasons: string[] = [];
+  if (daysClosedCount < 14) {
+    gateReasons.push(`still learning: needs ${14 - daysClosedCount} more closed days (have ${daysClosedCount}/14)`);
+  }
+  if (learning.expenseCount < 30) {
+    gateReasons.push(`still learning: needs ${30 - learning.expenseCount} more expenses (have ${learning.expenseCount}/30)`);
+  }
+  const isLearning = gateReasons.length > 0;
 
   // Monthly discretionary budget baseline
   const monthlyDiscretionaryBudget = allowance
@@ -208,15 +219,44 @@ export function analyzeExpenses(
     }
   );
 
+  const learningInsight: Insight | null = isLearning
+    ? {
+        id: 'learning:gate',
+        type: 'safe_to_spend',
+        title: gateReasons.join('; '),
+        evidence: {
+          daysClosed: daysClosedCount,
+          daysNeeded: Math.max(0, 14 - daysClosedCount),
+          expenseCount: learning.expenseCount,
+          expensesNeeded: Math.max(0, 30 - learning.expenseCount),
+          isLearning: true,
+        },
+        impactPaise: 0,
+        confidence: 1.0,
+        actionable: false,
+        levers: [],
+        firstSeen: now,
+        severity: 'info',
+      }
+    : null;
+
   return {
     evaluatedAt: now,
     coverage,
     allowance,
     projection,
-    insights: isLearning && safeToSpendInsight ? [safeToSpendInsight] : topInsights,
+    insights: isLearning
+      ? [
+          ...(safeToSpendInsight ? [safeToSpendInsight] : []),
+          ...(learningInsight ? [learningInsight] : []),
+        ]
+      : topInsights,
     silentFlags,
     allRankedInsights,
     learning,
+    // Expose gate state for the debug script and tests
+    isLearning,
+    gateReasons,
     transactionAnomalies: isLearning ? [] : transactionAnomalies,
     dailyAnomalies: isLearning ? [] : dailyAnomalies,
     recurring,

@@ -88,12 +88,17 @@ export async function POST(req: NextRequest) {
     message: 'Login successful',
   });
 
-  // Always mark Secure as required by prompt; in modern browsers http://localhost is secure context
+  // Secure only in production or over HTTPS, so local testing over HTTP works smoothly
+  const isHttps =
+    req.headers.get('x-forwarded-proto') === 'https' ||
+    req.nextUrl?.protocol === 'https:';
+  const isSecure = process.env.NODE_ENV === 'production' || isHttps;
+
   response.cookies.set({
     name: SESSION_COOKIE_NAME,
     value: token,
     httpOnly: true,
-    secure: true,
+    secure: isSecure,
     sameSite: 'lax',
     path: '/',
     maxAge: SESSION_MAX_AGE_SECONDS,

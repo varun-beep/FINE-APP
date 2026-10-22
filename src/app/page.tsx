@@ -16,6 +16,7 @@ import {
   Check,
   Edit2,
   ArrowRight,
+  X,
 } from 'lucide-react';
 import { EXPENSE_CATEGORIES, type ExpenseCategory } from '@/lib/validations';
 import type { Expense } from '@/db/schema';
@@ -58,6 +59,25 @@ export default function TonightEntryPage() {
   const [orderedCategories, setOrderedCategories] = useState<ExpenseCategory[]>([...EXPENSE_CATEGORIES]);
   const [quickRepeatCombos, setQuickRepeatCombos] = useState<QuickRepeatCombo[]>([]);
   const [merchantCategoryMap, setMerchantCategoryMap] = useState<Map<string, ExpenseCategory>>(new Map());
+
+  // Onboarding Checklist State
+  const [onboarding, setOnboarding] = useState<{
+    items: { id: string; label: string; done: boolean; href: string }[];
+    showChecklist: boolean;
+  } | null>(null);
+
+  const handleDismissOnboarding = async () => {
+    setOnboarding((prev) => (prev ? { ...prev, showChecklist: false } : null));
+    try {
+      await fetch('/api/onboarding', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dismissed: true }),
+      });
+    } catch (e) {
+      console.warn('Failed to dismiss onboarding', e);
+    }
+  };
 
   // Undo Toast State
   const [undoItem, setUndoItem] = useState<{ id: string; name: string } | null>(null);
@@ -169,6 +189,14 @@ export default function TonightEntryPage() {
 
         setQuickRepeatCombos(sortedCombos);
       }
+
+      // 4. Fetch onboarding checklist
+      fetch('/api/onboarding')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data) setOnboarding(data);
+        })
+        .catch(() => {});
     } catch (err) {
       console.error('Failed to load tonight entry data:', err);
     }
@@ -392,6 +420,53 @@ export default function TonightEntryPage() {
       <Navbar />
 
       <main className="mx-auto max-w-xl px-4 pt-4">
+        {/* Onboarding First-Run Checklist (Dismissible until done) */}
+        {onboarding?.showChecklist && (
+          <div className="mb-4 rounded-2xl border border-indigo-500/30 bg-indigo-950/30 p-4 backdrop-blur-md shadow-xl">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-bold border border-indigo-500/30">
+                  ✨
+                </span>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-200">
+                  First-Run Setup Checklist
+                </h3>
+              </div>
+              <button
+                onClick={handleDismissOnboarding}
+                className="text-slate-400 hover:text-white p-1 rounded-lg transition"
+                title="Dismiss checklist"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="text-xs text-indigo-300/80 mb-3">
+              Complete these steps so SpendCoach can calculate your daily allowance and isolate commitments:
+            </p>
+            <div className="space-y-2">
+              {onboarding.items.map((item) => (
+                <div
+                  key={item.id}
+                  onClick={() => router.push(item.href)}
+                  className="flex items-center justify-between rounded-xl bg-slate-900/60 border border-slate-800 p-2.5 text-xs transition hover:bg-slate-800/80 cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5">
+                    {item.done ? (
+                      <CheckCircle className="h-4 w-4 text-emerald-400 shrink-0" />
+                    ) : (
+                      <div className="h-4 w-4 rounded-full border border-slate-600 shrink-0" />
+                    )}
+                    <span className={item.done ? 'text-slate-400 line-through' : 'font-medium text-slate-200'}>
+                      {item.label}
+                    </span>
+                  </div>
+                  <ArrowRight className="h-3.5 w-3.5 text-slate-500" />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Unclosed Past Days Banners */}
         {unclosedPastDays.length > 0 && (
           <div className="mb-4 space-y-2">

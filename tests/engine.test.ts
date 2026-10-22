@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { analyzeExpenses } from '@/lib/engine';
-import type { EngineExpense, EngineBudget } from '@/lib/engine/types';
+import type { EngineExpense, EngineBudget, EngineDayClosure } from '@/lib/engine/types';
 import { addDays, getWeekdayName } from '@/lib/engine/math';
 
 describe('SpendCoach Learning Engine', () => {
@@ -110,6 +110,11 @@ describe('SpendCoach Learning Engine', () => {
     });
   });
 
+  const READY_CLOSED_DAYS: EngineDayClosure[] = Array.from({ length: 25 }, (_, i) => ({
+    day: addDays(BASE_DATE, -i),
+    status: 'logged' as const,
+  }));
+
   describe('3. Transaction Anomalies (Ready State)', () => {
     it('flags a clear outlier when score > 3.5 and amount > 1.5x median', () => {
       // 40 food expenses around ₹200 (20000 paise) + 1 outlier of ₹5000 (500000 paise)
@@ -133,7 +138,7 @@ describe('SpendCoach Learning Engine', () => {
         merchant: 'Taj Palace',
       });
 
-      const res = analyzeExpenses(expenses, { now: BASE_DATE });
+      const res = analyzeExpenses(expenses, { now: BASE_DATE, closedDays: READY_CLOSED_DAYS });
       expect(res.learning.status).toBe('ready');
       expect(res.transactionAnomalies.length).toBeGreaterThanOrEqual(1);
 
@@ -187,7 +192,7 @@ describe('SpendCoach Learning Engine', () => {
         spentOn: BASE_DATE,
       });
 
-      const res = analyzeExpenses(expenses, { now: BASE_DATE });
+      const res = analyzeExpenses(expenses, { now: BASE_DATE, closedDays: READY_CLOSED_DAYS });
       const flagged = res.transactionAnomalies.find((a) => a.expenseId === 'mad-zero-outlier');
       expect(flagged).toBeDefined();
       expect(flagged?.ratioToMedian).toBe(4);
@@ -236,7 +241,7 @@ describe('SpendCoach Learning Engine', () => {
         spentOn: BASE_DATE,
       });
 
-      const res = analyzeExpenses(expenses, { now: BASE_DATE });
+      const res = analyzeExpenses(expenses, { now: BASE_DATE, closedDays: READY_CLOSED_DAYS });
       const flagged = res.transactionAnomalies.find((a) => a.expenseId === 'isolated-huge');
       expect(flagged).toBeDefined();
       // Baseline median must remain 10000, NOT contaminated by the 10,00,000
@@ -272,7 +277,7 @@ describe('SpendCoach Learning Engine', () => {
         spentOn: BASE_DATE,
       });
 
-      const res = analyzeExpenses(expenses, { now: BASE_DATE });
+      const res = analyzeExpenses(expenses, { now: BASE_DATE, closedDays: READY_CLOSED_DAYS });
       const flagged = res.transactionAnomalies.find((a) => a.expenseId === 'ent-outlier');
       expect(flagged).toBeDefined();
       expect(flagged?.baselineType).toBe('overall');
@@ -334,7 +339,7 @@ describe('SpendCoach Learning Engine', () => {
         spentOn: BASE_DATE,
       });
 
-      const res = analyzeExpenses(expenses, { now: BASE_DATE });
+      const res = analyzeExpenses(expenses, { now: BASE_DATE, closedDays: READY_CLOSED_DAYS });
       const dayFlagged = res.dailyAnomalies.find((d) => d.date === BASE_DATE);
       expect(dayFlagged).toBeDefined();
       expect(dayFlagged?.weekday).toBe('Tuesday');
@@ -381,7 +386,7 @@ describe('SpendCoach Learning Engine', () => {
         spentOn: BASE_DATE,
       });
 
-      const res = analyzeExpenses(expenses, { now: BASE_DATE });
+      const res = analyzeExpenses(expenses, { now: BASE_DATE, closedDays: READY_CLOSED_DAYS });
       const dayFlagged = res.dailyAnomalies.find((d) => d.date === BASE_DATE);
       expect(dayFlagged).toBeDefined();
       expect(dayFlagged?.baselineType).toBe('all_days');

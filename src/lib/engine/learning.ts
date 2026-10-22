@@ -28,14 +28,14 @@ export function evaluateLearningState(
   const expenseCount = discretionaryExpenses.length;
 
   let distinctDaysCount: number;
-  if (closedDays && closedDays.length > 0) {
+  if (closedDays !== undefined) {
     // Only count days closed with 'logged' or 'no_spend'; 'skipped' days are excluded!
     const validClosedDays = closedDays.filter(
       (d) => d.status === 'logged' || d.status === 'no_spend'
     );
     distinctDaysCount = new Set(validClosedDays.map((d) => d.day)).size;
   } else {
-    // Fallback when closures are not supplied
+    // Fallback when closures are not supplied (e.g. legacy/isolated unit tests)
     distinctDaysCount = new Set(discretionaryExpenses.map((e) => e.spentOn)).size;
   }
 

@@ -1,7 +1,12 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { SESSION_COOKIE_NAME } from '@/lib/auth';
 
-export async function POST() {
+export async function POST(req: NextRequest) {
+  const isHttps =
+    req.headers.get('x-forwarded-proto') === 'https' ||
+    req.nextUrl?.protocol === 'https:';
+  const isSecure = process.env.NODE_ENV === 'production' || isHttps;
+
   const response = NextResponse.json({
     success: true,
     message: 'Logged out successfully',
@@ -11,7 +16,7 @@ export async function POST() {
     name: SESSION_COOKIE_NAME,
     value: '',
     httpOnly: true,
-    secure: true,
+    secure: isSecure,
     sameSite: 'lax',
     path: '/',
     maxAge: 0,

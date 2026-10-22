@@ -167,6 +167,12 @@ export const experiments = pgTable(
   ]
 );
 
+export const appSettings = pgTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 export type Schedule = typeof schedules.$inferSelect;
 export type NewSchedule = typeof schedules.$inferInsert;
 export type SchedulePriceHistory = typeof schedulePriceHistory.$inferSelect;
@@ -185,4 +191,7 @@ export type InsightLog = typeof insightLog.$inferSelect;
 export type NewInsightLog = typeof insightLog.$inferInsert;
 export type Experiment = typeof experiments.$inferSelect;
 export type NewExperiment = typeof experiments.$inferInsert;
+export type AppSetting = typeof appSettings.$inferSelect;
+export type NewAppSetting = typeof appSettings.$inferInsert;
+
 

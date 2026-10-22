@@ -84,6 +84,23 @@ export default function ReviewPage() {
       if (data.date) {
         setSelectedDate(data.date);
       }
+
+      // Report seen insights to increment times_shown ONLY on client render
+      const seenIds: string[] = [];
+      if (data.advice?.insights) {
+        for (const ins of data.advice.insights) {
+          if (ins.insight_id && !ins.insight_id.startsWith('safe_to_spend')) {
+            seenIds.push(ins.insight_id);
+          }
+        }
+      }
+      if (seenIds.length > 0) {
+        fetch('/api/insights/seen', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: seenIds }),
+        }).catch((e) => console.warn('Failed to record seen insights from review', e));
+      }
     } catch (err) {
       setErrorDaily((err as Error).message);
     } finally {

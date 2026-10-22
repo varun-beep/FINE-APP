@@ -175,6 +175,8 @@ export function analyzeBehaviour(
   }
 
   // 3. Merchant Concentration within Category
+  const totalDiscretionarySpend = eligibleExpenses.reduce((sum, e) => sum + e.amountPaise, 0);
+
   const byCategory: Record<string, EngineExpense[]> = {};
   for (const exp of eligibleExpenses) {
     if (!byCategory[exp.category]) {
@@ -184,6 +186,7 @@ export function analyzeBehaviour(
   }
 
   for (const [category, catExpenses] of Object.entries(byCategory)) {
+    // Threshold 1: At least 10 transactions in this category
     if (catExpenses.length < 10) continue;
 
     const merchantTotals = new Map<string, number>();
@@ -198,6 +201,12 @@ export function analyzeBehaviour(
     }
 
     if (catTotal <= 0) continue;
+
+    // Threshold 2: Category must have at least 3 distinct merchants
+    if (merchantTotals.size < 3) continue;
+
+    // Threshold 3: Category must account for at least 5% of discretionary spend
+    if (totalDiscretionarySpend > 0 && catTotal < 0.05 * totalDiscretionarySpend) continue;
 
     let topMerchant = '';
     let topSpend = 0;
