@@ -507,8 +507,8 @@ export async function generateDailyReview(
         const elapsedMs = Date.now() - startTime;
         const remainingBudgetMs = TOTAL_LLM_BUDGET_MS - elapsedMs;
 
-        // Only retry if we have at least 3 seconds left in the 22s budget
-        if (remainingBudgetMs >= 3000) {
+        // Only retry if we have at least 8 seconds left in the 22s budget
+        if (remainingBudgetMs >= 8000) {
           const repairMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
             ...messages,
             { role: 'assistant', content: rawModelOutput },

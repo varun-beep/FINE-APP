@@ -7,6 +7,7 @@ import type {
   MonthEndProjection,
 } from './types';
 import { getKolkataToday } from '../date';
+import { formatPaiseToRupees } from '../money';
 import { evaluateLearningState } from './learning';
 import { detectAnomalies } from './anomalies';
 import { detectRecurring } from './recurring';
@@ -133,8 +134,16 @@ export function analyzeExpenses(
     candidateInsights.push(...outlierResult.insights);
     silentFlags.push(...outlierResult.silentFlags);
 
+    const flaggedDuplicateIds = new Set<string>();
+
     for (const ins of outlierResult.insights) {
-      if (ins.expenseId) flaggedOutlierIds.add(ins.expenseId);
+      if (ins.expenseId) {
+        flaggedOutlierIds.add(ins.expenseId);
+        const ev = ins.evidence as Record<string, unknown> | undefined;
+        if (ev?.classification === 'possible_duplicate' || ev?.isDuplicate || ins.id.includes('duplicate')) {
+          flaggedDuplicateIds.add(ins.expenseId);
+        }
+      }
       const ev = ins.evidence as Record<string, unknown> | undefined;
       if (typeof ev?.expenseId === 'string') flaggedOutlierIds.add(ev.expenseId);
     }
@@ -146,17 +155,57 @@ export function analyzeExpenses(
       }
     }
 
-    // 2.c DRIFT (4 weeks vs prior 8 weeks medians)
-    const driftResult = analyzeCategoryDrift(expenses, now, { outlierExpenseIds: flaggedOutlierIds });
-    candidateInsights.push(...driftResult.insights);
+    // 2.c DRIFT (4 weeks vs prior 8 weeks medians; excludes duplicates and outliers)
+    const driftResult = analyzeCategoryDrift(expenses, now, {
+      outlierExpenseIds: flaggedOutlierIds,
+      duplicateExpenseIds: flaggedDuplicateIds,
+    });
 
     // 2.d BEHAVIOUR (payday surge, weekend ratio, merchant concentration)
     const behaviourInsights = analyzeBehaviour(expenses, schedules, now, { outlierExpenseIds: flaggedOutlierIds });
-    candidateInsights.push(...behaviourInsights);
 
     // 2.e SMALL_LEAKS (>= 8 purchases in 30 days, median < ₹300, >= 3% of discretionary)
     const leakInsights = detectSmallLeaks(expenses, now, { outlierExpenseIds: flaggedOutlierIds });
-    candidateInsights.push(...leakInsights);
+
+    // 4.c DRIFT & SMALL LEAK DEDUPLICATION:
+    // If one small-leak merchant explains >= 50% of a category drift, show ONE card
+    // (the drift, naming the driver) instead of both. The duplicate-charge card always stays separate.
+    const suppressedLeakIds = new Set<string>();
+    for (const driftIns of driftResult.insights) {
+      const driftEv = driftIns.evidence as Record<string, unknown> | undefined;
+      const driftCategory = (driftEv?.category as string) || '';
+      const driftImpact = driftIns.impactPaise;
+      const drivers = (driftEv?.drivers as Array<{ merchant: string; rupeesAddedPaise: number }>) || [];
+
+      for (const leakIns of leakInsights) {
+        const leakEv = leakIns.evidence as Record<string, unknown> | undefined;
+        const leakMerchant = (leakEv?.merchant as string) || (leakEv?.target as string) || '';
+        const leakCategory = (leakEv?.category as string) || '';
+        const leakImpact = leakIns.impactPaise;
+
+        const matchesCategory = leakCategory.toLowerCase() === driftCategory.toLowerCase();
+        const matchingDriver = drivers.find(
+          (d) => d.merchant.toLowerCase() === leakMerchant.toLowerCase()
+        );
+
+        if ((matchesCategory || matchingDriver) && driftImpact > 0) {
+          const explainsGte50 =
+            leakImpact >= 0.50 * driftImpact ||
+            (matchingDriver && matchingDriver.rupeesAddedPaise >= 0.50 * ((driftEv?.monthlyEffectPaise as number) / 4.33));
+
+          if (explainsGte50) {
+            driftIns.title = `${driftCategory} spend drifting up ${driftEv?.percentChange}% (+${formatPaiseToRupees(driftImpact)}/mo) driven by ${leakMerchant}`;
+            suppressedLeakIds.add(leakIns.id);
+          }
+        }
+      }
+    }
+
+    const activeLeakInsights = leakInsights.filter((l) => !suppressedLeakIds.has(l.id));
+
+    candidateInsights.push(...driftResult.insights);
+    candidateInsights.push(...behaviourInsights);
+    candidateInsights.push(...activeLeakInsights);
   }
 
   // 2.f COMMITMENT_LOAD (share of income, subscription overlap without judgement)

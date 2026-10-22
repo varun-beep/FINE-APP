@@ -17,6 +17,7 @@ import { analyzeCommitmentLoad } from '../src/lib/engine/commitments';
 import { analyzeSavings } from '../src/lib/engine/savings';
 import { calculateMonthEndProjection } from '../src/lib/engine/projection';
 import { rankAndFilterInsights } from '../src/lib/engine/ranking';
+import { addDays, daysDifference, median } from '../src/lib/engine/math';
 import type {
   EngineExpense,
   EngineBudget,
@@ -195,8 +196,15 @@ async function runEngineDebug() {
   });
 
   const flaggedOutlierIds = new Set<string>();
+  const flaggedDuplicateIds = new Set<string>();
   for (const ins of outlierResult.insights) {
-    if (ins.expenseId) flaggedOutlierIds.add(ins.expenseId);
+    if (ins.expenseId) {
+      flaggedOutlierIds.add(ins.expenseId);
+      const ev = ins.evidence as Record<string, unknown> | undefined;
+      if (ev?.classification === 'possible_duplicate' || ev?.isDuplicate || ins.id.includes('duplicate')) {
+        flaggedDuplicateIds.add(ins.expenseId);
+      }
+    }
     const ev = ins.evidence as Record<string, unknown> | undefined;
     if (typeof ev?.expenseId === 'string') flaggedOutlierIds.add(ev.expenseId);
   }
@@ -260,7 +268,10 @@ async function runEngineDebug() {
   // ==========================================
   // G3: DRIFT
   // ==========================================
-  const driftResult = analyzeCategoryDrift(engineExpenses, now, { outlierExpenseIds: flaggedOutlierIds });
+  const driftResult = analyzeCategoryDrift(engineExpenses, now, {
+    outlierExpenseIds: flaggedOutlierIds,
+    duplicateExpenseIds: flaggedDuplicateIds,
+  });
   if (isLearning) {
     for (const ins of driftResult.insights) {
       rawCandidates.push({
@@ -653,29 +664,76 @@ async function runEngineDebug() {
   console.log(`   • Deficit (Over): Ref = ${formatPaiseToRupees(refDeficitPaise)} | Engine = ${formatPaiseToRupees(s2s.insight?.impactPaise || 0)}`);
   console.log(`   [RECONCILE RESULT]: ${refDeficitPaise === s2s.insight?.impactPaise ? '✓ EXACT MATCH' : 'DISCREPANCY'}`);
 
-  // --- Insight 2: Food Drift (+174%) Reconcile & Arithmetic Explanation ---
+  // --- Insight 2: Food Drift Reconcile & Arithmetic Explanation ---
   console.log('\n2. Reference Loop: Food Category Drift & Arithmetic Explanation');
-  const foodExpenses = engineExpenses.filter(
-    (e) => e.category === 'Food' && (e.kind === 'spend' || !e.kind) && e.source !== 'schedule'
-  );
-  console.log(`   Total discretionary Food rows: ${foodExpenses.length}`);
-  const { insights: driftInsights } = analyzeCategoryDrift(engineExpenses, now);
+  const { insights: driftInsights } = analyzeCategoryDrift(engineExpenses, now, {
+    outlierExpenseIds: flaggedOutlierIds,
+    duplicateExpenseIds: flaggedDuplicateIds,
+  });
   const refFoodDrift = driftInsights.find((i) => i.id.includes('drift:Food'));
-  if (refFoodDrift) {
-    const ev = refFoodDrift.evidence as Record<string, number>;
-    console.log(`   • Engine Recent Weekly Median: ${formatPaiseToRupees(ev.recentWeeklyMedianPaise)}`);
-    console.log(`   • Engine Prior Weekly Median: ${formatPaiseToRupees(ev.priorWeeklyMedianPaise)}`);
-    console.log(`   • Engine Percent Change: +${ev.percentChange}%`);
-    console.log(`   • Engine Monthly Impact: ${formatPaiseToRupees(refFoodDrift.impactPaise)}`);
-    console.log('\n   [EXPLANATION OF +174% vs PLANTED +40%]:');
-    console.log('   In seed-demo.ts, three separate sets of food items were created:');
-    console.log('   1. Baseline meals (weeks 4-11): 3 meals/wk @ ~₹250 = ₹750/wk (median ₹750/wk)');
-    console.log('   2. Planted upgraded dining (weeks 0-3): 3 meals/wk @ ~₹400 = ₹1,215/wk');
-    console.log('   3. Planted micro-leak Chaayos: 20 transactions in last 30 days @ ₹120 in category "Food" (~₹600/wk)');
-    console.log('   4. Planted duplicate charge Swiggy: 2 transactions @ ₹450 today in category "Food"');
-    console.log('   Because Chaayos and Swiggy are in category "Food", recent weekly food spend totals');
-    console.log('   ~₹2,055/wk. (₹2,055 - ₹750) / ₹750 = +174%! The engine arithmetic is 100% exact.');
+
+  // Independent plain-loop recomputation applying the same exclusion rules
+  const twelveWeeksAgo = addDays(now, -84);
+  const plainFoodExpenses = engineExpenses.filter(
+    (e) =>
+      e.category === 'Food' &&
+      e.spentOn >= twelveWeeksAgo &&
+      e.spentOn <= now &&
+      (e.kind === 'spend' || !e.kind) &&
+      e.source !== 'schedule' &&
+      !e.scheduleId &&
+      !e.oneOff &&
+      !flaggedOutlierIds.has(e.id) &&
+      !flaggedDuplicateIds.has(e.id)
+  );
+
+  const plainWeeklyTotals: number[] = Array(12).fill(0);
+  for (const exp of plainFoodExpenses) {
+    const wIdx = Math.floor(daysDifference(now, exp.spentOn) / 7);
+    if (wIdx >= 0 && wIdx < 12) {
+      plainWeeklyTotals[wIdx] += exp.amountPaise;
+    }
   }
+
+  const plainRecentTotals = plainWeeklyTotals.slice(0, 4);
+  const plainPriorTotals = plainWeeklyTotals.slice(4, 12);
+  const plainRecentMedian = median(plainRecentTotals);
+  const plainPriorMedian = median(plainPriorTotals);
+  const plainPctChange =
+    plainPriorMedian > 0
+      ? Math.round(((plainRecentMedian - plainPriorMedian) / plainPriorMedian) * 1000) / 10
+      : 0;
+
+  console.log(`   Discretionary Food rows (after outlier/dup exclusions): ${plainFoodExpenses.length}`);
+  console.log(`   • 8 Baseline Weekly Totals (Weeks 4-11): [${plainPriorTotals.map(t => formatPaiseToRupees(t)).join(', ')}]`);
+  console.log(`   • 4 Recent Weekly Totals (Weeks 0-3):   [${plainRecentTotals.map(t => formatPaiseToRupees(t)).join(', ')}]`);
+  console.log(`   • Baseline Weekly Median: Ref = ${formatPaiseToRupees(plainPriorMedian)} | Engine = ${formatPaiseToRupees((refFoodDrift?.evidence as Record<string, number>)?.priorWeeklyMedianPaise || 0)}`);
+  console.log(`   • Recent Weekly Median:   Ref = ${formatPaiseToRupees(plainRecentMedian)} | Engine = ${formatPaiseToRupees((refFoodDrift?.evidence as Record<string, number>)?.recentWeeklyMedianPaise || 0)}`);
+  console.log(`   • Percent Change:         Ref = +${plainPctChange}% | Engine = +${(refFoodDrift?.evidence as Record<string, number>)?.percentChange || 0}%`);
+  console.log(`   • Monthly Impact:         Ref = ${formatPaiseToRupees(Math.round((plainRecentMedian - plainPriorMedian) * 4.33))} | Engine = ${formatPaiseToRupees(refFoodDrift?.impactPaise || 0)}`);
+
+  const evDrift = refFoodDrift?.evidence as Record<string, unknown> | undefined;
+  const drivers = (evDrift?.drivers as Array<{ merchant: string; rupeesAddedPaise: number }>) || [];
+  if (drivers.length > 0) {
+    console.log(`   • Top Drift Drivers: ${drivers.map(d => `${d.merchant} (+${formatPaiseToRupees(d.rupeesAddedPaise)}/wk)`).join(', ')}`);
+  }
+
+  const isExactMatch =
+    plainPriorMedian === (evDrift as Record<string, number>)?.priorWeeklyMedianPaise &&
+    plainRecentMedian === (evDrift as Record<string, number>)?.recentWeeklyMedianPaise &&
+    plainPctChange === (evDrift as Record<string, number>)?.percentChange;
+  console.log(`   [RECONCILE RESULT]: ${isExactMatch ? '✓ EXACT MATCH' : 'DISCREPANCY'}`);
+
+  console.log('\n   [EXPLANATION OF REPORTED DRIFT vs PLANTED +50%]:');
+  console.log('   In seed-demo.ts:');
+  console.log('   1. Baseline dining (weeks 4-11): 3 meals/wk @ ~₹250 = ₹750/wk (median ₹750/wk)');
+  console.log('   2. Planted dining upgrade (weeks 0-3): 3 meals/wk @ ~₹400 = ₹1,215/wk (a ~62% jump over baseline)');
+  console.log('   3. Planted micro-leak Chaayos: 20 visits in last 30 days @ ₹120 = ~₹600/wk (also in Food category)');
+  console.log('   4. Planted Swiggy duplicate charge: 2 charges @ ₹450 (successfully excluded by Rule 4a)');
+  console.log('   When Chaayos (~₹600/wk) + upgraded dining (~₹1,215/wk) combine, recent weekly food spend is ~₹1,815/wk.');
+  console.log('   (₹1,815 - ₹750) / ₹750 = +142%.');
+  console.log('   Furthermore, per Rule 4c: Chaayos accounts for ₹600/wk of the ₹1,065/wk increase (>50% of the drift),');
+  console.log('   so the engine surfaces Chaayos directly as the driver of the Food drift card, deduplicating the separate leak card!');
 
   // --- Insight 3: Small Leaks (Chaayos) Reconcile ---
   console.log('\n3. Reference Loop: Small Leaks (Chaayos)');

@@ -2,6 +2,12 @@ import type { EngineExperiment, EngineExpense, Insight } from './types';
 import { daysDifference } from './math';
 import { formatPaiseToRupees } from '../money';
 
+export const MAX_ACTIVE_EXPERIMENTS = 2;
+
+export function canStartExperiment(activeCount: number): boolean {
+  return activeCount < MAX_ACTIVE_EXPERIMENTS;
+}
+
 /**
  * Section: EXPERIMENT PROGRESS TRACKER
  * Generates an EXPERIMENT_PROGRESS insight for each active or completed experiment.

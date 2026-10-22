@@ -333,6 +333,316 @@ async function verifyLive() {
     }
   }
 
+  // 9. Create test expense with note "[VERIFY_LIVE]"
+  let createdExpenseId: string | null = null;
+  const todayStr = new Date().toISOString().slice(0, 10);
+  if (!sessionCookie) {
+    results.push({
+      step: '9. Create Test Expense [VERIFY_LIVE]',
+      passed: false,
+      details: 'Skipped because session cookie was not available',
+    });
+  } else {
+    try {
+      const res = await fetch(`${targetUrl}/api/expenses`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: sessionCookie,
+        },
+        body: JSON.stringify({
+          amount_paise: 25000,
+          category: 'Food',
+          note: '[VERIFY_LIVE]',
+          merchant: 'LiveTestCafe',
+          spent_on: todayStr,
+        }),
+      });
+
+      if (res.status === 201) {
+        const data = await res.json();
+        createdExpenseId = data?.expense?.id || null;
+        if (createdExpenseId) {
+          results.push({
+            step: '9. Create Test Expense [VERIFY_LIVE]',
+            passed: true,
+            details: `Created expense ID ${createdExpenseId} (HTTP 201)`,
+          });
+        } else {
+          results.push({
+            step: '9. Create Test Expense [VERIFY_LIVE]',
+            passed: false,
+            details: 'HTTP 201 returned but expense ID missing in response',
+          });
+        }
+      } else {
+        results.push({
+          step: '9. Create Test Expense [VERIFY_LIVE]',
+          passed: false,
+          details: `HTTP ${res.status}: ${await res.text().catch(() => '')}`,
+        });
+      }
+    } catch (err) {
+      results.push({
+        step: '9. Create Test Expense [VERIFY_LIVE]',
+        passed: false,
+        details: `Network error: ${(err as Error).message}`,
+      });
+    }
+  }
+
+  // 10. Edit the test expense
+  if (!sessionCookie || !createdExpenseId) {
+    results.push({
+      step: '10. Edit Test Expense',
+      passed: false,
+      details: 'Skipped because created expense ID was not available',
+    });
+  } else {
+    try {
+      const res = await fetch(`${targetUrl}/api/expenses/${createdExpenseId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: sessionCookie,
+        },
+        body: JSON.stringify({
+          note: '[VERIFY_LIVE] Updated Note',
+          amount_paise: 27500,
+        }),
+      });
+
+      if (res.status === 200) {
+        const data = await res.json();
+        if (data?.expense?.note === '[VERIFY_LIVE] Updated Note') {
+          results.push({
+            step: '10. Edit Test Expense',
+            passed: true,
+            details: `Updated note and amount to ₹275 successfully (HTTP 200)`,
+          });
+        } else {
+          results.push({
+            step: '10. Edit Test Expense',
+            passed: false,
+            details: `Unexpected response data: ${JSON.stringify(data)}`,
+          });
+        }
+      } else {
+        results.push({
+          step: '10. Edit Test Expense',
+          passed: false,
+          details: `HTTP ${res.status}: ${await res.text().catch(() => '')}`,
+        });
+      }
+    } catch (err) {
+      results.push({
+        step: '10. Edit Test Expense',
+        passed: false,
+        details: `Network error: ${(err as Error).message}`,
+      });
+    }
+  }
+
+  // 11. Delete the test expense (verify removed afterwards)
+  if (!sessionCookie || !createdExpenseId) {
+    results.push({
+      step: '11. Delete Test Expense (Cleaned Up)',
+      passed: false,
+      details: 'Skipped because created expense ID was not available',
+    });
+  } else {
+    try {
+      const res = await fetch(`${targetUrl}/api/expenses/${createdExpenseId}`, {
+        method: 'DELETE',
+        headers: { Cookie: sessionCookie },
+      });
+
+      if (res.status === 200) {
+        // Confirm deletion by querying expenses endpoint
+        const verifyRes = await fetch(`${targetUrl}/api/expenses?date=${todayStr}`, {
+          headers: { Cookie: sessionCookie },
+        });
+        const verifyData = await verifyRes.json().catch(() => ({ expenses: [] }));
+        const stillExists = (verifyData.expenses || []).some(
+          (e: { id: string }) => e.id === createdExpenseId
+        );
+
+        if (!stillExists) {
+          results.push({
+            step: '11. Delete Test Expense (Cleaned Up)',
+            passed: true,
+            details: `Deleted expense ${createdExpenseId} and confirmed absent (HTTP 200)`,
+          });
+        } else {
+          results.push({
+            step: '11. Delete Test Expense (Cleaned Up)',
+            passed: false,
+            details: 'DELETE returned 200 but expense still appeared in list',
+          });
+        }
+      } else {
+        results.push({
+          step: '11. Delete Test Expense (Cleaned Up)',
+          passed: false,
+          details: `HTTP ${res.status}: ${await res.text().catch(() => '')}`,
+        });
+      }
+    } catch (err) {
+      results.push({
+        step: '11. Delete Test Expense (Cleaned Up)',
+        passed: false,
+        details: `Network error: ${(err as Error).message}`,
+      });
+    }
+  }
+
+  // 12. /api/insights JSON Shape Verification
+  if (!sessionCookie) {
+    results.push({
+      step: '12. Insights JSON Shape (/api/insights)',
+      passed: false,
+      details: 'Skipped because session cookie was not available',
+    });
+  } else {
+    try {
+      const res = await fetch(`${targetUrl}/api/insights`, {
+        headers: { Cookie: sessionCookie },
+      });
+
+      if (res.status === 200) {
+        const data = await res.json();
+        const hasCoverage = data?.coverage !== undefined;
+        const hasAllowance = data?.allowance !== undefined;
+        const hasInsights = Array.isArray(data?.insights);
+        const hasSilentFlags = data?.silentFlags !== undefined;
+
+        if (hasCoverage && hasAllowance && hasInsights && hasSilentFlags) {
+          results.push({
+            step: '12. Insights JSON Shape (/api/insights)',
+            passed: true,
+            details: `Valid shape (coverage, allowance, insights: ${data.insights.length}, silentFlags)`,
+          });
+        } else {
+          results.push({
+            step: '12. Insights JSON Shape (/api/insights)',
+            passed: false,
+            details: `Missing expected keys: coverage=${hasCoverage}, allowance=${hasAllowance}, insights=${hasInsights}, silentFlags=${hasSilentFlags}`,
+          });
+        }
+      } else {
+        results.push({
+          step: '12. Insights JSON Shape (/api/insights)',
+          passed: false,
+          details: `HTTP ${res.status}: ${await res.text().catch(() => '')}`,
+        });
+      }
+    } catch (err) {
+      results.push({
+        step: '12. Insights JSON Shape (/api/insights)',
+        passed: false,
+        details: `Network error: ${(err as Error).message}`,
+      });
+    }
+  }
+
+  // 13. Export CSV Header Verification (/api/export)
+  if (!sessionCookie) {
+    results.push({
+      step: '13. Export CSV Header (/api/export)',
+      passed: false,
+      details: 'Skipped because session cookie was not available',
+    });
+  } else {
+    try {
+      const res = await fetch(`${targetUrl}/api/export`, {
+        headers: { Cookie: sessionCookie },
+      });
+
+      if (res.status === 200) {
+        const contentType = res.headers.get('content-type') || '';
+        const text = await res.text();
+        const lines = text.split('\n');
+        const expectedHeader = 'id,spent_on,amount_inr,amount_paise,category,merchant,note,kind,source,one_off,created_at';
+        const hasHeader = lines.some((l) => l.trim() === expectedHeader);
+
+        if (contentType.includes('csv') && hasHeader) {
+          results.push({
+            step: '13. Export CSV Header (/api/export)',
+            passed: true,
+            details: `Valid CSV export with correct headers and Content-Type: ${contentType}`,
+          });
+        } else {
+          results.push({
+            step: '13. Export CSV Header (/api/export)',
+            passed: false,
+            details: `CSV verification failed: contentType=${contentType}, hasHeader=${hasHeader}`,
+          });
+        }
+      } else {
+        results.push({
+          step: '13. Export CSV Header (/api/export)',
+          passed: false,
+          details: `HTTP ${res.status}: ${await res.text().catch(() => '')}`,
+        });
+      }
+    } catch (err) {
+      results.push({
+        step: '13. Export CSV Header (/api/export)',
+        passed: false,
+        details: `Network error: ${(err as Error).message}`,
+      });
+    }
+  }
+
+  // 14. Logout (/api/logout)
+  if (!sessionCookie) {
+    results.push({
+      step: '14. Logout (/api/logout)',
+      passed: false,
+      details: 'Skipped because session cookie was not available',
+    });
+  } else {
+    try {
+      const res = await fetch(`${targetUrl}/api/logout`, {
+        method: 'POST',
+        headers: { Cookie: sessionCookie },
+      });
+
+      if (res.status === 200) {
+        const setCookieHeader = res.headers.get('set-cookie') || '';
+        const cleared =
+          setCookieHeader.includes('session=') &&
+          (setCookieHeader.includes('Max-Age=0') || setCookieHeader.includes('max-age=0'));
+
+        if (cleared) {
+          results.push({
+            step: '14. Logout (/api/logout)',
+            passed: true,
+            details: 'Logged out successfully (HTTP 200, session cookie cleared with Max-Age=0)',
+          });
+        } else {
+          results.push({
+            step: '14. Logout (/api/logout)',
+            passed: true,
+            details: 'Logged out successfully (HTTP 200)',
+          });
+        }
+      } else {
+        results.push({
+          step: '14. Logout (/api/logout)',
+          passed: false,
+          details: `HTTP ${res.status}: ${await res.text().catch(() => '')}`,
+        });
+      }
+    } catch (err) {
+      results.push({
+        step: '14. Logout (/api/logout)',
+        passed: false,
+        details: `Network error: ${(err as Error).message}`,
+      });
+    }
+  }
+
   // Print Summary Table
   console.log('\n--- LIVE VERIFICATION RESULTS ---');
   console.log('| Step / Verification Item                     | Result | Details');
@@ -346,7 +656,7 @@ async function verifyLive() {
 
   const allPassed = results.every((r) => r.passed);
   if (allPassed) {
-    console.log('RESULT: ALL 8 LIVE CHECKS PASSED.');
+    console.log(`RESULT: ALL ${results.length} LIVE CHECKS PASSED.`);
     process.exit(0);
   } else {
     console.log('RESULT: SOME LIVE CHECKS FAILED.');

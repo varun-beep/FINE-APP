@@ -9,9 +9,9 @@ async function runSmokeLlm() {
   console.log('--- SpendCoach LLM Smoke Test ---');
 
   const apiKey = process.env.GROQ_API_KEY?.trim();
-  if (!apiKey || apiKey.length < 8) {
-    console.log('SKIPPING smoke:llm gracefully: GROQ_API_KEY is not set or is a placeholder in .env.local.');
-    console.log('Documented: SpendCoach safely uses deterministic fallback advice when LLM API key is not present.');
+  if (!apiKey) {
+    console.log('GROQ_API_KEY is empty in .env.local.');
+    console.log('Per instructions: STOP that task, say so, and continue with the rest.');
     process.exit(0);
   }
 
@@ -45,6 +45,9 @@ async function runSmokeLlm() {
     } else {
       console.log('\n[Guardrail Rejected Numbers]: (none rejected)');
     }
+
+    console.log('\n[Full Advice JSON]:');
+    console.log(JSON.stringify(result.advice, null, 2));
 
     console.log('\n[Final Advice Verdict]:', result.advice.verdict || result.advice.headline);
   } catch (err) {

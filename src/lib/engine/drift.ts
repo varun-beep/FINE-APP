@@ -2,6 +2,13 @@ import type { EngineExpense, Insight } from './types';
 import { median, addDays, getISOWeek, daysDifference } from './math';
 import { formatPaiseToRupees } from '../money';
 
+export interface DriftDriver {
+  merchant: string;
+  rupeesAddedPaise: number;
+  recentWeeklyAvgPaise: number;
+  baselineWeeklyAvgPaise: number;
+}
+
 export interface CategoryDriftAnalysis {
   category: string;
   status: 'ready' | 'insufficient_data';
@@ -12,22 +19,35 @@ export interface CategoryDriftAnalysis {
 /**
  * Generator 2.c: DRIFT
  * Compares the last 4 weeks' weekly totals to the prior 8 weeks (medians of weekly totals).
- * Requires >= 8 weeks of data and >= 6 transactions in the 12-week window.
- * Reports percent change and monthly ₹ effect.
+ * Excludes expenses flagged as possible_duplicate or outlier from the drift windows.
+ * Adds drivers to drift evidence: top 2 merchants by rupees added in recent window vs baseline average.
  */
 export function analyzeCategoryDrift(
   expenses: EngineExpense[],
   now: string,
-  options?: { outlierExpenseIds?: Set<string> }
+  options?: {
+    outlierExpenseIds?: Set<string>;
+    duplicateExpenseIds?: Set<string>;
+    excludedExpenseIds?: Set<string>;
+  }
 ): { insights: Insight[]; categoryAnalyses: CategoryDriftAnalysis[] } {
   const insights: Insight[] = [];
   const categoryAnalyses: CategoryDriftAnalysis[] = [];
 
   const twelveWeeksAgo = addDays(now, -84); // 12 weeks = 84 days
-  const outlierIds = options?.outlierExpenseIds;
+  const excludedIds = new Set<string>();
+  if (options?.outlierExpenseIds) {
+    for (const id of options.outlierExpenseIds) excludedIds.add(id);
+  }
+  if (options?.duplicateExpenseIds) {
+    for (const id of options.duplicateExpenseIds) excludedIds.add(id);
+  }
+  if (options?.excludedExpenseIds) {
+    for (const id of options.excludedExpenseIds) excludedIds.add(id);
+  }
 
   // Filter to eligible discretionary expenses within the 12-week window
-  // Exclude one_off rows, rows already flagged as outliers, schedule-posted rows, and non-spend kinds
+  // Exclude one_off rows, schedule-posted rows, non-spend kinds, outliers, and duplicates
   const windowExpenses = expenses.filter(
     (e) =>
       e.spentOn >= twelveWeeksAgo &&
@@ -36,7 +56,7 @@ export function analyzeCategoryDrift(
       e.source !== 'schedule' &&
       !e.scheduleId &&
       !e.oneOff &&
-      (!outlierIds || !outlierIds.has(e.id))
+      !excludedIds.has(e.id)
   );
 
   // Group by category
@@ -70,11 +90,21 @@ export function analyzeCategoryDrift(
 
     // Bucket into 12 weekly totals (week 0 is most recent: [now-7, now], week 1 is [now-14, now-7], ...)
     const weeklyTotals: number[] = Array(12).fill(0);
+    const merchantRecentSpend = new Map<string, number>();
+    const merchantBaselineSpend = new Map<string, number>();
+
     for (const exp of catExpenses) {
       const daysAgo = daysDifference(now, exp.spentOn);
       const weekIndex = Math.floor(daysAgo / 7);
       if (weekIndex >= 0 && weekIndex < 12) {
         weeklyTotals[weekIndex] += exp.amountPaise;
+      }
+
+      const mKey = (exp.merchant && exp.merchant.trim().length > 0) ? exp.merchant.trim() : 'Uncategorized';
+      if (daysAgo >= 0 && daysAgo < 28) {
+        merchantRecentSpend.set(mKey, (merchantRecentSpend.get(mKey) || 0) + exp.amountPaise);
+      } else if (daysAgo >= 28 && daysAgo < 84) {
+        merchantBaselineSpend.set(mKey, (merchantBaselineSpend.get(mKey) || 0) + exp.amountPaise);
       }
     }
 
@@ -105,6 +135,29 @@ export function analyzeCategoryDrift(
     // Monthly ₹ effect = weekly difference * 4.33
     const monthlyEffectPaise = Math.round(weeklyDiffPaise * 4.33);
 
+    // Compute drivers: top 2 merchants by rupees added in recent window vs baseline average
+    const allMerchants = new Set([...merchantRecentSpend.keys(), ...merchantBaselineSpend.keys()]);
+    const driverList: DriftDriver[] = [];
+
+    for (const m of allMerchants) {
+      const recentTotal = merchantRecentSpend.get(m) || 0;
+      const baselineTotal = merchantBaselineSpend.get(m) || 0;
+      const recentWeeklyAvg = recentTotal / 4;
+      const baselineWeeklyAvg = baselineTotal / 8;
+      const diffWeekly = Math.round(recentWeeklyAvg - baselineWeeklyAvg);
+      if (diffWeekly > 0) {
+        driverList.push({
+          merchant: m,
+          rupeesAddedPaise: diffWeekly,
+          recentWeeklyAvgPaise: Math.round(recentWeeklyAvg),
+          baselineWeeklyAvgPaise: Math.round(baselineWeeklyAvg),
+        });
+      }
+    }
+
+    driverList.sort((a, b) => b.rupeesAddedPaise - a.rupeesAddedPaise);
+    const top2Drivers = driverList.slice(0, 2);
+
     // Surface drift if significant: percentChange >= 20% (or <= -20%) and |monthlyEffect| >= ₹1,000
     const isDrift =
       Math.abs(percentChange) >= 0.20 && Math.abs(monthlyEffectPaise) >= 100000;
@@ -132,10 +185,13 @@ export function analyzeCategoryDrift(
 
         evidence: {
           category,
+          recentWeeklyTotalsPaise: recentWeeklyTotals,
+          priorWeeklyTotalsPaise: priorWeeklyTotals,
           recentWeeklyMedianPaise: recentWeeklyMedian,
           priorWeeklyMedianPaise: priorWeeklyMedian,
           percentChange: Math.round(percentChange * 1000) / 10,
           monthlyEffectPaise,
+          drivers: top2Drivers,
           transactionCount: catExpenses.length,
           weeksAnalyzed: 12,
         },

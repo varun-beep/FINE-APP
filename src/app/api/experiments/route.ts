@@ -5,7 +5,7 @@ import { eq, sql } from 'drizzle-orm';
 import { getKolkataToday } from '@/lib/date';
 import { addDays } from '@/lib/engine/math';
 import { triggerAsyncRecompute } from '@/lib/engine/db';
-import { generateExperimentProgressInsights } from '@/lib/engine/experiments';
+import { generateExperimentProgressInsights, canStartExperiment } from '@/lib/engine/experiments';
 import { jwtVerify } from 'jose/jwt/verify';
 
 async function isAuthorized(req: NextRequest): Promise<boolean> {
@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
       .where(eq(experiments.status, 'active'));
 
     const activeCount = countResult?.activeCount ?? 0;
-    if (activeCount >= 2) {
+    if (!canStartExperiment(activeCount)) {
       return NextResponse.json(
         {
           error: 'Maximum Limit Reached',

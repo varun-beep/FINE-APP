@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { generateWeeklyReview } from '@/lib/reviews/weekly';
 import { generateMonthlyReview } from '@/lib/reviews/monthly';
-import { generateExperimentProgressInsights } from '@/lib/engine/experiments';
+import { generateExperimentProgressInsights, canStartExperiment } from '@/lib/engine/experiments';
 import { isFeedbackSuppressed } from '@/lib/engine/ranking';
 import { validateActionAntiRepetition } from '@/lib/llm/guardrail';
 import { addDays } from '@/lib/engine/math';
@@ -197,18 +197,10 @@ describe('Missing Feature Tests (Item 4)', () => {
   // =========================================================================
   describe('3. Max-2-Active Experiments Cap', () => {
     it('enforces maximum 2 active experiments cap', () => {
-      const activeExperiments = [
-        { id: '1', status: 'active' },
-        { id: '2', status: 'active' },
-      ];
-
-      const canStartNew = activeExperiments.filter((e) => e.status === 'active').length < 2;
-      expect(canStartNew).toBe(false);
-
-      // Completing one unlocks a slot
-      activeExperiments[0].status = 'completed';
-      const canStartNow = activeExperiments.filter((e) => e.status === 'active').length < 2;
-      expect(canStartNow).toBe(true);
+      expect(canStartExperiment(0)).toBe(true);
+      expect(canStartExperiment(1)).toBe(true);
+      expect(canStartExperiment(2)).toBe(false);
+      expect(canStartExperiment(3)).toBe(false);
     });
   });
 

@@ -55,7 +55,7 @@ export default function ReviewPage() {
   // Feedback State
   const [feedbackSent, setFeedbackSent] = useState<Record<string, string>>({});
 
-  // 1. Fetch Daily Review
+  // 1. Fetch Daily Review (with polling support if review generation is in-flight)
   const fetchDailyReview = useCallback(async (date?: string, isRegen = false) => {
     try {
       if (isRegen) {
@@ -65,21 +65,45 @@ export default function ReviewPage() {
       }
       setErrorDaily(null);
 
-      const res = await fetch('/api/daily-review', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          date: date || undefined,
-          regenerate: isRegen,
-        }),
-      });
+      let attempts = 0;
+      let data: DailyReviewResult | null = null;
 
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.message || 'Failed to fetch review');
+      while (attempts < 20) {
+        attempts++;
+        const res = await fetch('/api/daily-review', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            date: date || undefined,
+            regenerate: isRegen,
+          }),
+        });
+
+        if (res.status === 202) {
+          // Still generating in background, wait and poll
+          await new Promise((r) => setTimeout(r, 1200));
+          continue;
+        }
+
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          throw new Error(errJson.message || 'Failed to fetch review');
+        }
+
+        const json = await res.json();
+        if (json.status === 'generating') {
+          await new Promise((r) => setTimeout(r, 1200));
+          continue;
+        }
+
+        data = json as DailyReviewResult;
+        break;
       }
 
-      const data: DailyReviewResult = await res.json();
+      if (!data) {
+        throw new Error('Review generation timed out. Please try again.');
+      }
+
       setDailyReview(data);
       if (data.date) {
         setSelectedDate(data.date);
@@ -376,10 +400,17 @@ export default function ReviewPage() {
         <>
           {loadingDaily ? (
             <div className="space-y-4">
-              <div className="h-28 rounded-2xl bg-slate-800/50 p-5 ring-1 ring-slate-700/40 animate-pulse motion-reduce:animate-none" />
-              <div className="h-20 rounded-2xl bg-slate-800/40 p-4 ring-1 ring-slate-700/30 animate-pulse motion-reduce:animate-none" />
-              <div className="h-40 rounded-2xl bg-slate-800/40 p-4 ring-1 ring-slate-700/30 animate-pulse motion-reduce:animate-none" />
-              <div className="h-28 rounded-2xl bg-slate-800/40 p-4 ring-1 ring-slate-700/30 animate-pulse motion-reduce:animate-none" />
+              <div className="rounded-3xl border border-emerald-500/30 bg-slate-900/90 p-8 text-center backdrop-blur-xl shadow-xl">
+                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/20">
+                  <RefreshCw className="h-7 w-7 animate-spin text-emerald-400 motion-reduce:animate-none" />
+                </div>
+                <h3 className="mt-4 text-lg font-bold text-white tracking-tight">Generating your review...</h3>
+                <p className="mt-1.5 text-xs text-slate-400 max-w-xs mx-auto">
+                  Synthesizing today&apos;s spending, budget status, and financial levers.
+                </p>
+              </div>
+              <div className="h-28 rounded-2xl bg-slate-800/40 p-5 ring-1 ring-slate-700/40 animate-pulse motion-reduce:animate-none" />
+              <div className="h-20 rounded-2xl bg-slate-800/30 p-4 ring-1 ring-slate-700/30 animate-pulse motion-reduce:animate-none" />
             </div>
           ) : errorDaily ? (
             <div className="rounded-2xl border border-rose-500/30 bg-rose-950/20 p-5 text-rose-300">

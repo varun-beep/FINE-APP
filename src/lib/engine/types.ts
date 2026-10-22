@@ -62,7 +62,7 @@ export interface Insight {
   id: string; // stable, e.g. "drift:Food:2026-W42"
   type: InsightType;
   title: string;
-  evidence: Record<string, number | string | boolean | null | undefined>;
+  evidence: Record<string, unknown>;
   impactPaise: number; // estimated ₹ effect this month or per month
   confidence: number; // 0-1 from sample size and signal strength
   actionable: boolean;
@@ -78,7 +78,7 @@ export interface SilentFlag {
   type: string;
   title: string;
   reason: string;
-  evidence: Record<string, number | string | boolean | null | undefined>;
+  evidence: Record<string, unknown>;
 }
 
 

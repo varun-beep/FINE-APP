@@ -102,6 +102,8 @@ export function detectSmallLeaks(
 
       evidence: {
         target: key,
+        merchant: key,
+        category: items[0]?.category || 'General',
         count,
         medianPaise: med,
         monthlyTotalPaise,
